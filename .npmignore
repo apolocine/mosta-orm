@@ -1,0 +1,42 @@
+# Source TypeScript (dist/ is published)
+src/
+tsconfig.json
+
+# Examples (not needed by consumers)
+examples/
+
+# Development files
+*.tgz
+*.log
+.env
+.env.*
+
+# Node modules
+node_modules/
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+__tests__/
+e2e/
+
+# Editor configs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# CI / Git
+.github/
+.git/
+.gitignore
+
+# Internal notes
+Write-*.md
+docs/Write-*.md
+TODO.md
+CHANGELOG.md
