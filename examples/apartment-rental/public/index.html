@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<!--
+  Frontend — Gestion Locative (Apartment Rental)
+  5 vues : Dashboard, Appartements, Locataires, Baux, Paiements
+  Author: Dr Hamid MADANI drmdh@msn.com
+-->
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gestion Locative — MostaORM</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .tab-btn.active { background: #2563eb; color: #fff; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+    .badge-available { background: #dcfce7; color: #166534; }
+    .badge-rented { background: #dbeafe; color: #1e40af; }
+    .badge-maintenance { background: #fef3c7; color: #92400e; }
+    .badge-active { background: #dcfce7; color: #166534; }
+    .badge-terminated { background: #fee2e2; color: #991b1b; }
+    .badge-expired { background: #f3f4f6; color: #374151; }
+    .badge-renewed { background: #e0e7ff; color: #3730a3; }
+    .badge-draft { background: #fef3c7; color: #92400e; }
+    .badge-paid { background: #dcfce7; color: #166534; }
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-late { background: #fee2e2; color: #991b1b; }
+    .badge-partial { background: #ffedd5; color: #9a3412; }
+    .badge-waived { background: #f3f4f6; color: #374151; }
+    .badge-former { background: #f3f4f6; color: #374151; }
+    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
+    .stat-card { background: #fff; border-radius: 12px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .toast { position: fixed; bottom: 1rem; right: 1rem; padding: 0.75rem 1.5rem; border-radius: 8px; color: #fff; z-index: 99; transition: opacity 0.3s; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-gradient-to-r from-blue-700 to-blue-900 text-white px-6 py-4 shadow-lg">
+    <h1 class="text-2xl font-bold">Gestion Locative</h1>
+    <p class="text-blue-200 text-sm">Exemple MostaORM — gestion immobiliere</p>
+  </header>
+
+  <!-- Tabs -->
+  <nav class="flex gap-1 px-6 py-3 bg-white shadow-sm border-b flex-wrap">
+    <button class="tab-btn active px-4 py-2 rounded-lg text-sm font-medium" data-tab="dashboard">Dashboard</button>
+    <button class="tab-btn px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-100" data-tab="apartments">Appartements</button>
+    <button class="tab-btn px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-100" data-tab="tenants">Locataires</button>
+    <button class="tab-btn px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-100" data-tab="leases">Baux</button>
+    <button class="tab-btn px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-100" data-tab="payments">Paiements</button>
+  </nav>
+
+  <main class="max-w-7xl mx-auto px-4 py-6">
+
+    <!-- ═══════════ DASHBOARD ═══════════ -->
+    <section id="sec-dashboard">
+      <div id="dash-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6"></div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="stat-card">
+          <h3 class="text-lg font-semibold mb-2">Paiements en retard</h3>
+          <div id="dash-late" class="text-3xl font-bold text-red-600">—</div>
+        </div>
+        <div class="stat-card">
+          <h3 class="text-lg font-semibold mb-2">Revenu mensuel attendu</h3>
+          <div id="dash-monthly" class="text-3xl font-bold text-green-600">—</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ APPARTEMENTS ═══════════ -->
+    <section id="sec-apartments" class="hidden">
+      <div class="flex flex-wrap gap-2 mb-4 items-center">
+        <input id="apt-search" type="text" placeholder="Rechercher..." class="border rounded-lg px-3 py-2 text-sm w-64" />
+        <select id="apt-filter" class="border rounded-lg px-3 py-2 text-sm">
+          <option value="">Tous</option>
+          <option value="available">Disponibles</option>
+          <option value="rented">Loues</option>
+          <option value="maintenance">En maintenance</option>
+        </select>
+        <button onclick="openAptForm()" class="ml-auto bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">+ Ajouter</button>
+      </div>
+      <div class="overflow-x-auto bg-white rounded-xl shadow">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-left">
+            <tr>
+              <th class="px-4 py-3">Ref</th>
+              <th class="px-4 py-3">Titre</th>
+              <th class="px-4 py-3">Type</th>
+              <th class="px-4 py-3">Ville</th>
+              <th class="px-4 py-3">Surface</th>
+              <th class="px-4 py-3">Loyer</th>
+              <th class="px-4 py-3">Statut</th>
+              <th class="px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="apt-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ═══════════ LOCATAIRES ═══════════ -->
+    <section id="sec-tenants" class="hidden">
+      <div class="flex flex-wrap gap-2 mb-4 items-center">
+        <input id="ten-search" type="text" placeholder="Rechercher..." class="border rounded-lg px-3 py-2 text-sm w-64" />
+        <button onclick="openTenForm()" class="ml-auto bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">+ Ajouter</button>
+      </div>
+      <div class="overflow-x-auto bg-white rounded-xl shadow">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-left">
+            <tr>
+              <th class="px-4 py-3">Nom</th>
+              <th class="px-4 py-3">Telephone</th>
+              <th class="px-4 py-3">Email</th>
+              <th class="px-4 py-3">Profession</th>
+              <th class="px-4 py-3">Revenu</th>
+              <th class="px-4 py-3">Statut</th>
+              <th class="px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="ten-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ═══════════ BAUX ═══════════ -->
+    <section id="sec-leases" class="hidden">
+      <div class="flex flex-wrap gap-2 mb-4 items-center">
+        <select id="lease-filter" class="border rounded-lg px-3 py-2 text-sm">
+          <option value="">Tous</option>
+          <option value="active">Actifs</option>
+          <option value="terminated">Resilies</option>
+          <option value="expired">Expires</option>
+        </select>
+        <button onclick="openLeaseForm()" class="ml-auto bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">+ Nouveau bail</button>
+      </div>
+      <div class="overflow-x-auto bg-white rounded-xl shadow">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-left">
+            <tr>
+              <th class="px-4 py-3">N° Bail</th>
+              <th class="px-4 py-3">Appartement</th>
+              <th class="px-4 py-3">Locataire</th>
+              <th class="px-4 py-3">Debut</th>
+              <th class="px-4 py-3">Loyer</th>
+              <th class="px-4 py-3">Statut</th>
+              <th class="px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="lease-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ═══════════ PAIEMENTS ═══════════ -->
+    <section id="sec-payments" class="hidden">
+      <div class="flex flex-wrap gap-2 mb-4 items-center">
+        <select id="pay-filter" class="border rounded-lg px-3 py-2 text-sm">
+          <option value="">Tous</option>
+          <option value="pending">En attente</option>
+          <option value="paid">Payes</option>
+          <option value="late">En retard</option>
+          <option value="partial">Partiels</option>
+        </select>
+        <button onclick="openPayForm()" class="ml-auto bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">+ Nouveau paiement</button>
+      </div>
+      <div class="overflow-x-auto bg-white rounded-xl shadow">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-left">
+            <tr>
+              <th class="px-4 py-3">Periode</th>
+              <th class="px-4 py-3">Bail</th>
+              <th class="px-4 py-3">Montant du</th>
+              <th class="px-4 py-3">Paye</th>
+              <th class="px-4 py-3">Echeance</th>
+              <th class="px-4 py-3">Methode</th>
+              <th class="px-4 py-3">Statut</th>
+              <th class="px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="pay-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ═══════════ MODAL APPARTEMENT ═══════════ -->
+  <div id="apt-modal" class="modal-bg hidden">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b flex justify-between items-center">
+        <h2 id="apt-modal-title" class="text-lg font-semibold">Appartement</h2>
+        <button onclick="closeModal('apt-modal')" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+      </div>
+      <form id="apt-form" onsubmit="saveApt(event)" class="px-6 py-4 space-y-3">
+        <input type="hidden" id="apt-id" />
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Reference</label><input id="apt-reference" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Titre</label><input id="apt-title" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div><label class="text-xs text-gray-500">Type</label>
+            <select id="apt-propertyType" class="w-full border rounded px-2 py-1.5 text-sm">
+              <option value="studio">Studio</option><option value="f1">F1</option><option value="f2">F2</option>
+              <option value="f3">F3</option><option value="f4">F4</option><option value="f5">F5</option>
+              <option value="villa">Villa</option><option value="duplex">Duplex</option>
+              <option value="local-commercial">Local commercial</option>
+            </select>
+          </div>
+          <div><label class="text-xs text-gray-500">Surface (m²)</label><input id="apt-surface" type="number" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Etage</label><input id="apt-floor" type="number" value="0" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div><label class="text-xs text-gray-500">Pieces</label><input id="apt-rooms" type="number" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Chambres</label><input id="apt-bedrooms" type="number" value="0" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">SDB</label><input id="apt-bathrooms" type="number" value="1" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Adresse</label><input id="apt-address" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Ville</label><input id="apt-city" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Code postal</label><input id="apt-postalCode" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Wilaya</label><input id="apt-wilaya" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div><label class="text-xs text-gray-500">Loyer (DA)</label><input id="apt-monthlyRent" type="number" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Charges (DA)</label><input id="apt-monthlyCharges" type="number" value="0" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Caution (DA)</label><input id="apt-securityDeposit" type="number" value="0" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="flex gap-4 text-sm">
+          <label><input type="checkbox" id="apt-hasElevator" /> Ascenseur</label>
+          <label><input type="checkbox" id="apt-furnished" /> Meuble</label>
+          <label><input type="checkbox" id="apt-hasParking" /> Parking</label>
+          <label><input type="checkbox" id="apt-hasBalcony" /> Balcon</label>
+        </div>
+        <div><label class="text-xs text-gray-500">Description</label><textarea id="apt-description" rows="2" class="w-full border rounded px-2 py-1.5 text-sm"></textarea></div>
+        <div class="flex gap-2 justify-end pt-2">
+          <button type="button" onclick="closeModal('apt-modal')" class="px-4 py-2 border rounded-lg text-sm">Annuler</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════ MODAL LOCATAIRE ═══════════ -->
+  <div id="ten-modal" class="modal-bg hidden">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b flex justify-between items-center">
+        <h2 id="ten-modal-title" class="text-lg font-semibold">Locataire</h2>
+        <button onclick="closeModal('ten-modal')" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+      </div>
+      <form id="ten-form" onsubmit="saveTen(event)" class="px-6 py-4 space-y-3">
+        <input type="hidden" id="ten-id" />
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Prenom</label><input id="ten-firstName" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Nom</label><input id="ten-lastName" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Telephone</label><input id="ten-phone" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Email</label><input id="ten-email" type="email" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Profession</label><input id="ten-profession" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Employeur</label><input id="ten-employer" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Revenu mensuel (DA)</label><input id="ten-monthlyIncome" type="number" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Date de naissance</label><input id="ten-dateOfBirth" type="date" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Type piece d'identite</label>
+            <select id="ten-idType" class="w-full border rounded px-2 py-1.5 text-sm">
+              <option value="">—</option><option value="cni">CNI</option>
+              <option value="passport">Passeport</option><option value="driving-license">Permis</option>
+            </select>
+          </div>
+          <div><label class="text-xs text-gray-500">N° piece d'identite</label><input id="ten-idNumber" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Contact d'urgence</label><input id="ten-emergencyContact" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Tel urgence</label><input id="ten-emergencyPhone" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div><label class="text-xs text-gray-500">Notes</label><textarea id="ten-notes" rows="2" class="w-full border rounded px-2 py-1.5 text-sm"></textarea></div>
+        <div class="flex gap-2 justify-end pt-2">
+          <button type="button" onclick="closeModal('ten-modal')" class="px-4 py-2 border rounded-lg text-sm">Annuler</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════ MODAL BAIL ═══════════ -->
+  <div id="lease-modal" class="modal-bg hidden">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="px-6 py-4 border-b flex justify-between items-center">
+        <h2 id="lease-modal-title" class="text-lg font-semibold">Bail</h2>
+        <button onclick="closeModal('lease-modal')" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+      </div>
+      <form id="lease-form" onsubmit="saveLease(event)" class="px-6 py-4 space-y-3">
+        <input type="hidden" id="lease-id" />
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Appartement</label>
+            <select id="lease-apartment" required class="w-full border rounded px-2 py-1.5 text-sm"></select>
+          </div>
+          <div><label class="text-xs text-gray-500">Locataire</label>
+            <select id="lease-tenant" required class="w-full border rounded px-2 py-1.5 text-sm"></select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Date debut</label><input id="lease-startDate" type="date" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Type de bail</label>
+            <select id="lease-leaseType" class="w-full border rounded px-2 py-1.5 text-sm">
+              <option value="residential">Habitation</option><option value="commercial">Commercial</option><option value="seasonal">Saisonnier</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div><label class="text-xs text-gray-500">Loyer (DA)</label><input id="lease-monthlyRent" type="number" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Charges (DA)</label><input id="lease-monthlyCharges" type="number" value="0" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Caution (DA)</label><input id="lease-securityDeposit" type="number" value="0" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Jour de paiement</label><input id="lease-paymentDay" type="number" min="1" max="28" value="1" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Mode de paiement</label>
+            <select id="lease-paymentMethod" class="w-full border rounded px-2 py-1.5 text-sm">
+              <option value="cash">Especes</option><option value="transfer">Virement</option>
+              <option value="check">Cheque</option><option value="ccp">CCP</option>
+            </select>
+          </div>
+        </div>
+        <div><label class="text-xs text-gray-500">Notes</label><textarea id="lease-notes" rows="2" class="w-full border rounded px-2 py-1.5 text-sm"></textarea></div>
+        <div class="flex gap-2 justify-end pt-2">
+          <button type="button" onclick="closeModal('lease-modal')" class="px-4 py-2 border rounded-lg text-sm">Annuler</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════ MODAL PAIEMENT ═══════════ -->
+  <div id="pay-modal" class="modal-bg hidden">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+      <div class="px-6 py-4 border-b flex justify-between items-center">
+        <h2 id="pay-modal-title" class="text-lg font-semibold">Paiement</h2>
+        <button onclick="closeModal('pay-modal')" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+      </div>
+      <form id="pay-form" onsubmit="savePay(event)" class="px-6 py-4 space-y-3">
+        <input type="hidden" id="pay-id" />
+        <div><label class="text-xs text-gray-500">Bail</label>
+          <select id="pay-lease" required class="w-full border rounded px-2 py-1.5 text-sm"></select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Periode (YYYY-MM)</label><input id="pay-period" required placeholder="2026-03" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Echeance</label><input id="pay-dueDate" type="date" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs text-gray-500">Montant du (DA)</label><input id="pay-amountDue" type="number" required class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+          <div><label class="text-xs text-gray-500">Montant paye (DA)</label><input id="pay-amountPaid" type="number" value="0" class="w-full border rounded px-2 py-1.5 text-sm" /></div>
+        </div>
+        <div><label class="text-xs text-gray-500">Methode</label>
+          <select id="pay-method" class="w-full border rounded px-2 py-1.5 text-sm">
+            <option value="">—</option><option value="cash">Especes</option>
+            <option value="transfer">Virement</option><option value="check">Cheque</option><option value="ccp">CCP</option>
+          </select>
+        </div>
+        <div class="flex gap-2 justify-end pt-2">
+          <button type="button" onclick="closeModal('pay-modal')" class="px-4 py-2 border rounded-lg text-sm">Annuler</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast bg-green-600 hidden"></div>
+
+<script>
+// Author: Dr Hamid MADANI drmdh@msn.com
+
+const API = '/api';
+
+/* ── Helpers ── */
+function $(id) { return document.getElementById(id); }
+function DA(n) { return new Intl.NumberFormat('fr-DZ').format(n) + ' DA'; }
+function badge(status) { return `<span class="badge badge-${status}">${status}</span>`; }
+
+function toast(msg, ok = true) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = `toast ${ok ? 'bg-green-600' : 'bg-red-600'}`;
+  t.classList.remove('hidden');
+  setTimeout(() => t.classList.add('hidden'), 2500);
+}
+
+function closeModal(id) { $(id).classList.add('hidden'); }
+
+async function api(path, opts) {
+  const r = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || r.statusText); }
+  return r.json();
+}
+
+/* ── Tabs ── */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+    $('sec-' + btn.dataset.tab).classList.remove('hidden');
+    loadTab(btn.dataset.tab);
+  });
+});
+
+function loadTab(tab) {
+  if (tab === 'dashboard') loadDashboard();
+  else if (tab === 'apartments') loadApartments();
+  else if (tab === 'tenants') loadTenants();
+  else if (tab === 'leases') loadLeases();
+  else if (tab === 'payments') loadPayments();
+}
+
+/* ═══════════ DASHBOARD ═══════════ */
+async function loadDashboard() {
+  try {
+    const d = await api('/dashboard');
+    $('dash-cards').innerHTML = `
+      <div class="stat-card"><div class="text-sm text-gray-500">Appartements</div>
+        <div class="text-2xl font-bold">${d.apartments.total}</div>
+        <div class="text-xs text-gray-400">${d.apartments.available} dispo / ${d.apartments.rented} loues</div></div>
+      <div class="stat-card"><div class="text-sm text-gray-500">Locataires actifs</div>
+        <div class="text-2xl font-bold">${d.tenants.active}</div>
+        <div class="text-xs text-gray-400">${d.tenants.total} au total</div></div>
+      <div class="stat-card"><div class="text-sm text-gray-500">Taux d'occupation</div>
+        <div class="text-2xl font-bold ${d.apartments.occupancyRate > 70 ? 'text-green-600' : 'text-orange-600'}">${d.apartments.occupancyRate}%</div></div>
+      <div class="stat-card"><div class="text-sm text-gray-500">Total percu</div>
+        <div class="text-2xl font-bold text-green-600">${DA(d.payments.totalCollected)}</div>
+        <div class="text-xs text-gray-400">Impayes: ${DA(d.payments.totalUnpaid)}</div></div>
+    `;
+    $('dash-late').textContent = d.payments.latePayments;
+    $('dash-monthly').textContent = DA(d.leases.expectedMonthly);
+  } catch (e) { toast(e.message, false); }
+}
+
+/* ═══════════ APPARTEMENTS ═══════════ */
+async function loadApartments() {
+  try {
+    const filter = $('apt-filter').value;
+    const search = $('apt-search').value.trim();
+    let url = '/apartments';
+    if (search) url += `?search=${encodeURIComponent(search)}`;
+    else if (filter) url += `?status=${filter}`;
+    const data = await api(url);
+    $('apt-tbody').innerHTML = data.map(a => `
+      <tr class="border-t hover:bg-gray-50">
+        <td class="px-4 py-2 font-mono text-xs">${a.reference}</td>
+        <td class="px-4 py-2 font-medium">${a.title}</td>
+        <td class="px-4 py-2">${a.propertyType}</td>
+        <td class="px-4 py-2">${a.city}</td>
+        <td class="px-4 py-2">${a.surface} m²</td>
+        <td class="px-4 py-2 font-medium">${DA(a.monthlyRent)}</td>
+        <td class="px-4 py-2">${badge(a.status)}</td>
+        <td class="px-4 py-2 space-x-1">
+          <button onclick="editApt('${a.id}')" class="text-blue-600 hover:underline text-xs">Modifier</button>
+          <button onclick="deleteApt('${a.id}')" class="text-red-600 hover:underline text-xs">Suppr</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+$('apt-filter').addEventListener('change', loadApartments);
+$('apt-search').addEventListener('input', debounce(loadApartments, 300));
+
+function openAptForm(data) {
+  $('apt-modal-title').textContent = data ? 'Modifier l\'appartement' : 'Nouvel appartement';
+  $('apt-id').value = data?.id || '';
+  ['reference','title','address','city','postalCode','wilaya','description'].forEach(f => $(('apt-'+f)).value = data?.[f] || '');
+  ['surface','rooms','bedrooms','bathrooms','floor','monthlyRent','monthlyCharges','securityDeposit'].forEach(f => $(('apt-'+f)).value = data?.[f] || 0);
+  $('apt-propertyType').value = data?.propertyType || 'studio';
+  ['hasElevator','furnished','hasParking','hasBalcony'].forEach(f => $(('apt-'+f)).checked = !!data?.[f]);
+  $('apt-modal').classList.remove('hidden');
+}
+
+async function editApt(id) {
+  try { const d = await api('/apartments/' + id); openAptForm(d); }
+  catch (e) { toast(e.message, false); }
+}
+
+async function saveApt(e) {
+  e.preventDefault();
+  const id = $('apt-id').value;
+  const body = {};
+  ['reference','title','propertyType','address','city','postalCode','wilaya','description'].forEach(f => body[f] = $(('apt-'+f)).value);
+  ['surface','rooms','bedrooms','bathrooms','floor','monthlyRent','monthlyCharges','securityDeposit'].forEach(f => body[f] = Number($(('apt-'+f)).value));
+  ['hasElevator','furnished','hasParking','hasBalcony'].forEach(f => body[f] = $(('apt-'+f)).checked);
+  body.status = 'available';
+  try {
+    if (id) await api('/apartments/' + id, { method: 'PUT', body: JSON.stringify(body) });
+    else await api('/apartments', { method: 'POST', body: JSON.stringify(body) });
+    closeModal('apt-modal'); toast(id ? 'Modifie' : 'Cree'); loadApartments();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteApt(id) {
+  if (!confirm('Supprimer cet appartement ?')) return;
+  try { await api('/apartments/' + id, { method: 'DELETE' }); toast('Supprime'); loadApartments(); }
+  catch (e) { toast(e.message, false); }
+}
+
+/* ═══════════ LOCATAIRES ═══════════ */
+async function loadTenants() {
+  try {
+    const search = $('ten-search').value.trim();
+    let url = '/tenants';
+    if (search) url += `?search=${encodeURIComponent(search)}`;
+    const data = await api(url);
+    $('ten-tbody').innerHTML = data.map(t => `
+      <tr class="border-t hover:bg-gray-50">
+        <td class="px-4 py-2 font-medium">${t.lastName} ${t.firstName}</td>
+        <td class="px-4 py-2">${t.phone}</td>
+        <td class="px-4 py-2">${t.email || '—'}</td>
+        <td class="px-4 py-2">${t.profession || '—'}</td>
+        <td class="px-4 py-2">${t.monthlyIncome ? DA(t.monthlyIncome) : '—'}</td>
+        <td class="px-4 py-2">${badge(t.status)}</td>
+        <td class="px-4 py-2 space-x-1">
+          <button onclick="editTen('${t.id}')" class="text-blue-600 hover:underline text-xs">Modifier</button>
+          <button onclick="deleteTen('${t.id}')" class="text-red-600 hover:underline text-xs">Suppr</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+$('ten-search').addEventListener('input', debounce(loadTenants, 300));
+
+function openTenForm(data) {
+  $('ten-modal-title').textContent = data ? 'Modifier le locataire' : 'Nouveau locataire';
+  $('ten-id').value = data?.id || '';
+  ['firstName','lastName','phone','email','profession','employer','dateOfBirth','idNumber','emergencyContact','emergencyPhone','notes'].forEach(f => $(('ten-'+f)).value = data?.[f] || '');
+  $('ten-monthlyIncome').value = data?.monthlyIncome || '';
+  $('ten-idType').value = data?.idType || '';
+  $('ten-modal').classList.remove('hidden');
+}
+
+async function editTen(id) {
+  try { const d = await api('/tenants/' + id); openTenForm(d); }
+  catch (e) { toast(e.message, false); }
+}
+
+async function saveTen(e) {
+  e.preventDefault();
+  const id = $('ten-id').value;
+  const body = {};
+  ['firstName','lastName','phone','email','profession','employer','dateOfBirth','idType','idNumber','emergencyContact','emergencyPhone','notes'].forEach(f => {
+    const v = $(('ten-'+f)).value; if (v) body[f] = v;
+  });
+  if ($('ten-monthlyIncome').value) body.monthlyIncome = Number($('ten-monthlyIncome').value);
+  body.status = 'active';
+  try {
+    if (id) await api('/tenants/' + id, { method: 'PUT', body: JSON.stringify(body) });
+    else await api('/tenants', { method: 'POST', body: JSON.stringify(body) });
+    closeModal('ten-modal'); toast(id ? 'Modifie' : 'Cree'); loadTenants();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deleteTen(id) {
+  if (!confirm('Supprimer ce locataire ?')) return;
+  try { await api('/tenants/' + id, { method: 'DELETE' }); toast('Supprime'); loadTenants(); }
+  catch (e) { toast(e.message, false); }
+}
+
+/* ═══════════ BAUX ═══════════ */
+async function loadLeases() {
+  try {
+    const filter = $('lease-filter').value;
+    let url = '/leases';
+    if (filter) url += `?status=${filter}`;
+    const data = await api(url);
+    $('lease-tbody').innerHTML = data.map(l => {
+      const aptLabel = l.apartment?.title || l.apartment?.reference || (typeof l.apartment === 'string' ? l.apartment.substring(0,8) : '—');
+      const tenLabel = l.tenant ? `${l.tenant.lastName || ''} ${l.tenant.firstName || ''}`.trim() : (typeof l.tenant === 'string' ? l.tenant.substring(0,8) : '—');
+      return `
+      <tr class="border-t hover:bg-gray-50">
+        <td class="px-4 py-2 font-mono text-xs">${l.leaseNumber}</td>
+        <td class="px-4 py-2">${aptLabel}</td>
+        <td class="px-4 py-2">${tenLabel}</td>
+        <td class="px-4 py-2">${l.startDate?.substring(0,10) || '—'}</td>
+        <td class="px-4 py-2 font-medium">${DA(l.monthlyRent + l.monthlyCharges)}</td>
+        <td class="px-4 py-2">${badge(l.status)}</td>
+        <td class="px-4 py-2 space-x-1">
+          ${l.status === 'active' ? `<button onclick="terminateLease('${l.id}')" class="text-orange-600 hover:underline text-xs">Resilier</button>` : ''}
+          ${l.status === 'active' ? `<button onclick="renewLease('${l.id}')" class="text-green-600 hover:underline text-xs">Renouveler</button>` : ''}
+          <button onclick="deleteLease('${l.id}')" class="text-red-600 hover:underline text-xs">Suppr</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+$('lease-filter').addEventListener('change', loadLeases);
+
+async function openLeaseForm() {
+  $('lease-modal-title').textContent = 'Nouveau bail';
+  $('lease-id').value = '';
+  ['startDate','monthlyRent','monthlyCharges','securityDeposit','paymentDay','notes'].forEach(f => $(('lease-'+f)).value = '');
+  $('lease-paymentDay').value = 1;
+  // Charger les selects
+  const [apts, tens] = await Promise.all([api('/apartments?status=available'), api('/tenants?status=active')]);
+  $('lease-apartment').innerHTML = apts.map(a => `<option value="${a.id}">${a.reference} — ${a.title}</option>`).join('');
+  $('lease-tenant').innerHTML = tens.map(t => `<option value="${t.id}">${t.lastName} ${t.firstName}</option>`).join('');
+  $('lease-modal').classList.remove('hidden');
+}
+
+async function saveLease(e) {
+  e.preventDefault();
+  const body = {
+    apartment: $('lease-apartment').value,
+    tenant: $('lease-tenant').value,
+    startDate: $('lease-startDate').value,
+    leaseType: $('lease-leaseType').value,
+    monthlyRent: Number($('lease-monthlyRent').value),
+    monthlyCharges: Number($('lease-monthlyCharges').value),
+    securityDeposit: Number($('lease-securityDeposit').value),
+    paymentDay: Number($('lease-paymentDay').value),
+    paymentMethod: $('lease-paymentMethod').value,
+    status: 'active',
+  };
+  if ($('lease-notes').value) body.notes = $('lease-notes').value;
+  try {
+    await api('/leases', { method: 'POST', body: JSON.stringify(body) });
+    closeModal('lease-modal'); toast('Bail cree'); loadLeases();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function terminateLease(id) {
+  const reason = prompt('Raison de la resiliation :');
+  if (!reason) return;
+  try { await api('/leases/' + id + '/terminate', { method: 'PATCH', body: JSON.stringify({ reason }) }); toast('Bail resilie'); loadLeases(); }
+  catch (e) { toast(e.message, false); }
+}
+
+async function renewLease(id) {
+  if (!confirm('Renouveler ce bail ?')) return;
+  try { await api('/leases/' + id + '/renew', { method: 'PATCH' }); toast('Bail renouvele'); loadLeases(); }
+  catch (e) { toast(e.message, false); }
+}
+
+async function deleteLease(id) {
+  if (!confirm('Supprimer ce bail ?')) return;
+  try { await api('/leases/' + id, { method: 'DELETE' }); toast('Supprime'); loadLeases(); }
+  catch (e) { toast(e.message, false); }
+}
+
+/* ═══════════ PAIEMENTS ═══════════ */
+async function loadPayments() {
+  try {
+    const filter = $('pay-filter').value;
+    let url = '/payments';
+    if (filter) url += `?status=${filter}`;
+    const data = await api(url);
+    $('pay-tbody').innerHTML = data.map(p => `
+      <tr class="border-t hover:bg-gray-50">
+        <td class="px-4 py-2 font-mono">${p.period}</td>
+        <td class="px-4 py-2 text-xs">${typeof p.lease === 'object' ? p.lease?.leaseNumber || '' : (p.lease || '').substring(0,8)}</td>
+        <td class="px-4 py-2">${DA(p.amountDue)}</td>
+        <td class="px-4 py-2 font-medium">${DA(p.amountPaid)}</td>
+        <td class="px-4 py-2">${p.dueDate?.substring(0,10) || '—'}</td>
+        <td class="px-4 py-2">${p.method || '—'}</td>
+        <td class="px-4 py-2">${badge(p.status)}</td>
+        <td class="px-4 py-2 space-x-1">
+          ${['pending','late','partial'].includes(p.status) ? `<button onclick="markPaid('${p.id}', ${p.amountDue})" class="text-green-600 hover:underline text-xs">Encaisser</button>` : ''}
+          <button onclick="deletePay('${p.id}')" class="text-red-600 hover:underline text-xs">Suppr</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+$('pay-filter').addEventListener('change', loadPayments);
+
+async function openPayForm() {
+  $('pay-modal-title').textContent = 'Nouveau paiement';
+  $('pay-id').value = '';
+  ['period','dueDate','amountDue','amountPaid'].forEach(f => $(('pay-'+f)).value = '');
+  $('pay-method').value = '';
+  const leases = await api('/leases?status=active');
+  $('pay-lease').innerHTML = leases.map(l => {
+    const label = l.leaseNumber || l.id.substring(0,8);
+    return `<option value="${l.id}">${label}</option>`;
+  }).join('');
+  $('pay-modal').classList.remove('hidden');
+}
+
+async function savePay(e) {
+  e.preventDefault();
+  const body = {
+    lease: $('pay-lease').value,
+    period: $('pay-period').value,
+    dueDate: $('pay-dueDate').value,
+    amountDue: Number($('pay-amountDue').value),
+    amountPaid: Number($('pay-amountPaid').value) || 0,
+    status: 'pending',
+  };
+  if ($('pay-method').value) body.method = $('pay-method').value;
+  try {
+    await api('/payments', { method: 'POST', body: JSON.stringify(body) });
+    closeModal('pay-modal'); toast('Paiement cree'); loadPayments();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function markPaid(id, amountDue) {
+  const method = prompt('Methode de paiement (cash / transfer / check / ccp) :');
+  if (!method) return;
+  try {
+    await api('/payments/' + id + '/mark-paid', {
+      method: 'PATCH',
+      body: JSON.stringify({ amountPaid: amountDue, method }),
+    });
+    toast('Paiement encaisse'); loadPayments();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function deletePay(id) {
+  if (!confirm('Supprimer ce paiement ?')) return;
+  try { await api('/payments/' + id, { method: 'DELETE' }); toast('Supprime'); loadPayments(); }
+  catch (e) { toast(e.message, false); }
+}
+
+/* ── Utilitaire debounce ── */
+function debounce(fn, ms) {
+  let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+/* ── Init ── */
+loadDashboard();
+</script>
+</body>
+</html>

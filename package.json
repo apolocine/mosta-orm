@@ -1,0 +1,91 @@
+{
+  "name": "@mostajs/orm",
+  "version": "1.0.0",
+  "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in",
+  "author": "Dr Hamid MADANI <drmdh@msn.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "docs",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "orm",
+    "database",
+    "mongodb",
+    "sqlite",
+    "postgresql",
+    "mysql",
+    "mariadb",
+    "oracle",
+    "mssql",
+    "cockroachdb",
+    "db2",
+    "hana",
+    "spanner",
+    "sybase",
+    "hibernate",
+    "repository-pattern",
+    "multi-dialect",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/apolocine/mosta-orm"
+  },
+  "homepage": "https://mostajs.dev",
+  "bugs": {
+    "url": "https://github.com/apolocine/mosta-orm/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@google-cloud/spanner": ">=7.0.0",
+    "@sap/hana-client": ">=2.0.0",
+    "better-sqlite3": ">=9.0.0",
+    "ibm_db": ">=3.0.0",
+    "mariadb": ">=3.0.0",
+    "mongoose": ">=7.0.0",
+    "mssql": ">=10.0.0",
+    "mysql2": ">=3.0.0",
+    "oracledb": ">=6.0.0",
+    "pg": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "mongoose": { "optional": true },
+    "better-sqlite3": { "optional": true },
+    "pg": { "optional": true },
+    "mysql2": { "optional": true },
+    "mariadb": { "optional": true },
+    "oracledb": { "optional": true },
+    "mssql": { "optional": true },
+    "ibm_db": { "optional": true },
+    "@sap/hana-client": { "optional": true },
+    "@google-cloud/spanner": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/pg": "^8.0.0",
+    "better-sqlite3": "^12.6.2",
+    "mongoose": "^8.0.0",
+    "typescript": "^5.6.0"
+  }
+}
