@@ -555,13 +555,14 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     for (const [name, field] of Object.entries(schema.fields)) {
       let colDef = `  ${q(name)} ${this.fieldToSqlType(field)}`;
-      if (field.required) colDef += ' NOT NULL';
-      if (field.unique) colDef += ' UNIQUE';
+      // DEFAULT must come before NOT NULL for HSQLDB compatibility
       if (field.default !== undefined && field.default !== 'now' && field.default !== null) {
         const defVal = this.serializeValue(field.default, field);
         if (typeof defVal === 'string') colDef += ` DEFAULT '${defVal.replace(/'/g, "''")}'`;
         else if (typeof defVal === 'number') colDef += ` DEFAULT ${defVal}`;
       }
+      if (field.required) colDef += ' NOT NULL';
+      if (field.unique) colDef += ' UNIQUE';
       cols.push(colDef);
     }
 
