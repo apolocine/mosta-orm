@@ -490,6 +490,58 @@ DB_SCHEMA_STRATEGY=update  # in .env
 | `DB_CACHE_ENABLED` | `false` | Query result cache |
 | `DB_CACHE_TTL` | `300` | Cache TTL in seconds |
 
+| `MOSTA_BRIDGE_AUTOSTART` | `true` | JDBC bridge auto-start: `true`, `false`, `detect` |
+| `MOSTA_BRIDGE_PORT_BASE` | `8765` | First bridge HTTP port |
+| `MOSTA_BRIDGE_PORT_INCREMENT` | `true` | Auto-increment ports for multiple bridges |
+| `MOSTA_JAR_DIR` | auto-detect | Directory for JDBC JAR files |
+| `MOSTA_BRIDGE_JAVA` | auto-detect | Path to MostaJdbcBridge.java |
+| `MOSTA_BRIDGE_MAX_RETRIES` | `3` | Max bridge start attempts before giving up |
+| `MOSTA_BRIDGE_TIMEOUT` | `15000` | Bridge health check timeout (ms) |
+
+---
+
+## JDBC Bridge & JAR Upload
+
+MostaORM includes a universal JDBC bridge for databases without npm drivers (HyperSQL, Oracle, DB2, SAP HANA, Sybase). The bridge is a Java HTTP server (`MostaJdbcBridge.java`) that translates HTTP requests into JDBC calls.
+
+### JAR Management API
+
+MostaORM exports functions for managing JDBC driver JARs:
+
+```typescript
+import {
+  saveJarFile,      // Save an uploaded JAR to jar_files/
+  deleteJarFile,    // Delete a JAR from jar_files/
+  listJarFiles,     // List all JARs with dialect detection
+  getJdbcDialectStatus,  // Status of each JDBC dialect (JAR present?)
+  detectDialectFromJar,  // Detect dialect from JAR filename
+} from '@mostajs/orm'
+```
+
+### Next.js Route (via @mostajs/setup)
+
+```typescript
+// src/app/api/setup/upload-jar/route.ts
+import { createUploadJarHandlers } from '@mostajs/setup/api/upload-jar'
+
+const { GET, POST, DELETE } = createUploadJarHandlers()
+export { GET, POST, DELETE }
+```
+
+- **GET** — list JARs and JDBC dialect status
+- **POST** — upload a `.jar` file (multipart/form-data, field `jar`)
+- **DELETE** — remove a JAR (`{ "fileName": "hsqldb-2.7.2.jar" }`)
+
+### BridgeManager (multi-bridge)
+
+```typescript
+import { BridgeManager } from '@mostajs/orm'
+
+const manager = BridgeManager.getInstance()
+// Bridges are managed automatically by the dialect's connect()
+// Multiple bridges can run simultaneously on incrementing ports
+```
+
 ---
 
 ## Complete Example — Blog API

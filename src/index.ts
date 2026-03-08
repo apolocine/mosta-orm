@@ -83,6 +83,24 @@ export { BaseRepository } from './core/base-repository.js';
 export { normalizeDoc, normalizeDocs } from './core/normalizer.js';
 
 // ============================================================
+// JDBC Bridge
+// ============================================================
+export { JdbcNormalizer, parseUri } from './bridge/JdbcNormalizer.js';
+export { JDBC_REGISTRY, hasJdbcDriver, getJdbcDriverInfo } from './bridge/jdbc-registry.js';
+export { BridgeManager } from './bridge/BridgeManager.js';
+export {
+  saveJarFile,
+  deleteJarFile,
+  listJarFiles,
+  detectDialectFromJar,
+  getJdbcDialectStatus,
+} from './bridge/jar-upload.js';
+export type { BridgeInstance } from './bridge/BridgeManager.js';
+export type { JarUploadResult } from './bridge/jar-upload.js';
+export type { JdbcDriverInfo } from './bridge/jdbc-registry.js';
+export type { JdbcBridgeConfig } from './bridge/JdbcNormalizer.js';
+
+// ============================================================
 // Errors
 // ============================================================
 export {

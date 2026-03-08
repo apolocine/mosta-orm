@@ -45,7 +45,7 @@ class MariaDBDialect extends MySQLDialect {
   }
 
   // Override executeQuery to handle mariadb driver's different API
-  async executeQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
+  async doExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
     if (!this.pool) throw new Error('MariaDB not connected. Call connect() first.');
     try {
       const rows = await (this.pool as { query(sql: string, params: unknown[]): Promise<T[]> }).query(sql, params);
@@ -62,7 +62,7 @@ class MariaDBDialect extends MySQLDialect {
     }
   }
 
-  async executeRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
+  async doExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
     if (!this.pool) throw new Error('MariaDB not connected. Call connect() first.');
     try {
       const result = await (this.pool as { query(sql: string, params: unknown[]): Promise<{ affectedRows?: number }> }).query(sql, params);

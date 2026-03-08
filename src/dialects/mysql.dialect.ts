@@ -104,13 +104,13 @@ export class MySQLDialect extends AbstractSqlDialect {
 
   // --- Query execution ---
 
-  async executeQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
+  async doExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
     if (!this.pool) throw new Error('MySQL not connected. Call connect() first.');
     const [rows] = await (this.pool as { execute(sql: string, params: unknown[]): Promise<[T[], unknown]> }).execute(sql, params);
     return rows as T[];
   }
 
-  async executeRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
+  async doExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
     if (!this.pool) throw new Error('MySQL not connected. Call connect() first.');
     const [result] = await (this.pool as { execute(sql: string, params: unknown[]): Promise<[{ affectedRows?: number }, unknown]> }).execute(sql, params);
     return { changes: (result as { affectedRows?: number }).affectedRows ?? 0 };
