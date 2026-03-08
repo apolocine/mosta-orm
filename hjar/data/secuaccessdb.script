@@ -29,11 +29,55 @@ SET FILES NIO TRUE
 SET FILES NIO SIZE 256
 SET FILES LOG TRUE
 SET FILES LOG SIZE 50
-SET FILES CHECK 28
+SET FILES CHECK 144
 SET DATABASE COLLATION "SQL_TEXT" PAD SPACE
 CREATE USER SA PASSWORD DIGEST 'd41d8cd98f00b204e9800998ecf8427e'
 ALTER USER SA SET LOCAL TRUE
 CREATE SCHEMA PUBLIC AUTHORIZATION DBA
+CREATE MEMORY TABLE PUBLIC."users"("id" VARCHAR(36) PRIMARY KEY,"email" VARCHAR(4000) NOT NULL,"password" VARCHAR(4000) NOT NULL,"firstName" VARCHAR(4000) NOT NULL,"lastName" VARCHAR(4000) NOT NULL,"phone" VARCHAR(4000),"status" VARCHAR(4000) DEFAULT 'active',"lastLoginAt" TIMESTAMP,"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("email"))
+CREATE INDEX "idx_users_0" ON PUBLIC."users"("status")
+CREATE MEMORY TABLE PUBLIC."roles"("id" VARCHAR(36) PRIMARY KEY,"name" VARCHAR(4000) NOT NULL,"description" VARCHAR(4000),"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("name"))
+CREATE MEMORY TABLE PUBLIC."permissions"("id" VARCHAR(36) PRIMARY KEY,"name" VARCHAR(4000) NOT NULL,"description" VARCHAR(4000),"category" VARCHAR(4000),"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("name"))
+CREATE MEMORY TABLE PUBLIC."permission_categories"("id" VARCHAR(36) PRIMARY KEY,"name" VARCHAR(4000) NOT NULL,"label" VARCHAR(4000) NOT NULL,"description" VARCHAR(4000),"icon" VARCHAR(4000),"order" DOUBLE DEFAULT 0,"system" BOOLEAN,"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("name"))
+CREATE INDEX "idx_permission_categories_0" ON PUBLIC."permission_categories"("order","name")
+CREATE MEMORY TABLE PUBLIC."settings"("id" VARCHAR(36) PRIMARY KEY,"key" VARCHAR(4000) NOT NULL,"value" CLOB(1G) NOT NULL,"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("key"))
+CREATE MEMORY TABLE PUBLIC."auditlogs"("id" VARCHAR(36) PRIMARY KEY,"userName" VARCHAR(4000) NOT NULL,"userRole" VARCHAR(4000) NOT NULL,"action" VARCHAR(4000) NOT NULL,"module" VARCHAR(4000) NOT NULL,"resource" VARCHAR(4000) DEFAULT '',"resourceId" VARCHAR(4000) DEFAULT '',"details" CLOB(1G),"ipAddress" VARCHAR(4000) DEFAULT '',"status" VARCHAR(4000) DEFAULT 'success',"timestamp" TIMESTAMP,"userId" VARCHAR(36) NOT NULL)
+CREATE INDEX "idx_auditlogs_0" ON PUBLIC."auditlogs"("timestamp")
+CREATE INDEX "idx_auditlogs_1" ON PUBLIC."auditlogs"("module","timestamp")
+CREATE INDEX "idx_auditlogs_2" ON PUBLIC."auditlogs"("userId","timestamp")
+CREATE MEMORY TABLE PUBLIC."clients"("id" VARCHAR(36) PRIMARY KEY,"clientNumber" VARCHAR(4000),"clientType" VARCHAR(4000) NOT NULL,"firstName" VARCHAR(4000) NOT NULL,"lastName" VARCHAR(4000) NOT NULL,"phone" VARCHAR(4000),"email" VARCHAR(4000),"dateOfBirth" TIMESTAMP,"gender" VARCHAR(4000),"photo" VARCHAR(4000),"faceDescriptor" CLOB(1G),"address" VARCHAR(4000),"wilaya" VARCHAR(4000),"qrCode" VARCHAR(4000),"status" VARCHAR(4000) DEFAULT 'active',"notes" VARCHAR(4000),"rfidTagId" VARCHAR(36),"createdBy" VARCHAR(36) NOT NULL,"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("clientNumber"),UNIQUE("qrCode"))
+CREATE INDEX "idx_clients_0" ON PUBLIC."clients"("phone")
+CREATE INDEX "idx_clients_1" ON PUBLIC."clients"("status")
+CREATE INDEX "idx_clients_2" ON PUBLIC."clients"("clientType")
+CREATE MEMORY TABLE PUBLIC."activities"("id" VARCHAR(36) PRIMARY KEY,"name" VARCHAR(4000) NOT NULL,"slug" VARCHAR(4000) NOT NULL,"description" VARCHAR(4000),"icon" VARCHAR(4000),"color" VARCHAR(4000),"capacity" DOUBLE,"currentOccupancy" DOUBLE DEFAULT 0,"schedule" CLOB(1G),"ticketValidityMode" VARCHAR(4000) DEFAULT 'single_use',"ticketDuration" DOUBLE,"price" DOUBLE DEFAULT 0 NOT NULL,"currency" VARCHAR(4000) DEFAULT 'DA',"status" VARCHAR(4000) DEFAULT 'active',"sortOrder" DOUBLE DEFAULT 0,"createdBy" VARCHAR(36),"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("slug"))
+CREATE INDEX "idx_activities_0" ON PUBLIC."activities"("status")
+CREATE MEMORY TABLE PUBLIC."subscription_plans"("id" VARCHAR(36) PRIMARY KEY,"name" VARCHAR(4000) NOT NULL,"description" VARCHAR(4000),"type" VARCHAR(4000) NOT NULL,"duration" DOUBLE,"activities" CLOB(1G),"price" DOUBLE NOT NULL,"currency" VARCHAR(4000) DEFAULT 'DA',"isActive" BOOLEAN,"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP)
+CREATE INDEX "idx_subscription_plans_0" ON PUBLIC."subscription_plans"("isActive")
+CREATE MEMORY TABLE PUBLIC."client_accesses"("id" VARCHAR(36) PRIMARY KEY,"accessType" VARCHAR(4000) NOT NULL,"totalQuota" DOUBLE,"remainingQuota" DOUBLE,"startDate" TIMESTAMP NOT NULL,"endDate" TIMESTAMP,"status" VARCHAR(4000) DEFAULT 'active',"client" VARCHAR(36) NOT NULL,"plan" VARCHAR(36),"activity" VARCHAR(36) NOT NULL,"createdBy" VARCHAR(36) NOT NULL,"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP)
+CREATE INDEX "idx_client_accesses_0" ON PUBLIC."client_accesses"("client","activity")
+CREATE INDEX "idx_client_accesses_1" ON PUBLIC."client_accesses"("client","status")
+CREATE INDEX "idx_client_accesses_2" ON PUBLIC."client_accesses"("status")
+CREATE MEMORY TABLE PUBLIC."tickets"("id" VARCHAR(36) PRIMARY KEY,"ticketNumber" VARCHAR(4000),"ticketType" VARCHAR(4000) DEFAULT 'standard',"code" VARCHAR(4000),"codeFormat" VARCHAR(4000) DEFAULT 'qrcode',"clientName" VARCHAR(4000) NOT NULL,"activityName" VARCHAR(4000) NOT NULL,"validityMode" VARCHAR(4000) NOT NULL,"validUntil" TIMESTAMP,"status" VARCHAR(4000) DEFAULT 'active',"scannedAt" TIMESTAMP,"amount" DOUBLE DEFAULT 0 NOT NULL,"currency" VARCHAR(4000) DEFAULT 'DA',"printCount" DOUBLE DEFAULT 0,"client" VARCHAR(36) NOT NULL,"clientAccess" VARCHAR(36) NOT NULL,"activity" VARCHAR(36) NOT NULL,"sourceClient" VARCHAR(36),"scannedBy" VARCHAR(36),"createdBy" VARCHAR(36) NOT NULL,"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("ticketNumber"),UNIQUE("code"))
+CREATE INDEX "idx_tickets_0" ON PUBLIC."tickets"("client")
+CREATE INDEX "idx_tickets_1" ON PUBLIC."tickets"("status")
+CREATE INDEX "idx_tickets_2" ON PUBLIC."tickets"("validUntil")
+CREATE INDEX "idx_tickets_3" ON PUBLIC."tickets"("codeFormat")
+CREATE MEMORY TABLE PUBLIC."scan_logs"("id" VARCHAR(36) PRIMARY KEY,"scanMethod" VARCHAR(4000) DEFAULT 'webcam',"result" VARCHAR(4000) NOT NULL,"denyReason" VARCHAR(4000),"quotaBefore" DOUBLE,"quotaAfter" DOUBLE,"isReentry" BOOLEAN,"timestamp" TIMESTAMP,"ticket" VARCHAR(36),"client" VARCHAR(36),"activity" VARCHAR(36),"scannedBy" VARCHAR(36) NOT NULL)
+CREATE INDEX "idx_scan_logs_0" ON PUBLIC."scan_logs"("client")
+CREATE INDEX "idx_scan_logs_1" ON PUBLIC."scan_logs"("timestamp")
+CREATE INDEX "idx_scan_logs_2" ON PUBLIC."scan_logs"("result")
+CREATE MEMORY TABLE PUBLIC."lockers"("id" VARCHAR(36) PRIMARY KEY,"number" DOUBLE NOT NULL,"zone" VARCHAR(4000) NOT NULL,"status" VARCHAR(4000) DEFAULT 'available',"rfidLockId" VARCHAR(4000),"lastAssignedAt" TIMESTAMP,"currentClient" VARCHAR(36),"currentTag" VARCHAR(36),"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("number"))
+CREATE INDEX "idx_lockers_0" ON PUBLIC."lockers"("zone")
+CREATE INDEX "idx_lockers_1" ON PUBLIC."lockers"("status")
+CREATE MEMORY TABLE PUBLIC."rfid_tags"("id" VARCHAR(36) PRIMARY KEY,"tagId" VARCHAR(4000) NOT NULL,"status" VARCHAR(4000) DEFAULT 'available',"assignedAt" TIMESTAMP,"deactivatedAt" TIMESTAMP,"notes" VARCHAR(4000),"client" VARCHAR(36),"assignedBy" VARCHAR(36),"createdAt" TIMESTAMP,"updatedAt" TIMESTAMP,UNIQUE("tagId"))
+CREATE INDEX "idx_rfid_tags_0" ON PUBLIC."rfid_tags"("status")
+CREATE INDEX "idx_rfid_tags_1" ON PUBLIC."rfid_tags"("client")
+CREATE MEMORY TABLE PUBLIC."locker_events"("id" VARCHAR(36) PRIMARY KEY,"eventType" VARCHAR(4000) NOT NULL,"notes" VARCHAR(4000),"timestamp" TIMESTAMP,"locker" VARCHAR(36) NOT NULL,"client" VARCHAR(36),"rfidTag" VARCHAR(36),"performedBy" VARCHAR(36) NOT NULL)
+CREATE INDEX "idx_locker_events_0" ON PUBLIC."locker_events"("locker")
+CREATE INDEX "idx_locker_events_1" ON PUBLIC."locker_events"("timestamp")
+CREATE MEMORY TABLE PUBLIC."ticket_counters"("id" VARCHAR(36) PRIMARY KEY,"name" VARCHAR(4000) NOT NULL,"seq" DOUBLE DEFAULT 0,UNIQUE("name"))
+CREATE MEMORY TABLE PUBLIC."user_roles"("userId" VARCHAR(36) NOT NULL,"roleId" VARCHAR(36) NOT NULL,PRIMARY KEY("userId","roleId"))
+CREATE MEMORY TABLE PUBLIC."role_permissions"("roleId" VARCHAR(36) NOT NULL,"permissionId" VARCHAR(36) NOT NULL,PRIMARY KEY("roleId","permissionId"))
 ALTER SEQUENCE SYSTEM_LOBS.LOB_ID RESTART WITH 1
 SET DATABASE DEFAULT INITIAL SCHEMA PUBLIC
 GRANT USAGE ON DOMAIN INFORMATION_SCHEMA.CARDINAL_NUMBER TO PUBLIC
