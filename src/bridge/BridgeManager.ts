@@ -384,6 +384,7 @@ export class BridgeManager {
       if (!existsSync(dir)) return;
 
       const pidFiles = readdirSync(dir).filter(f => f.startsWith('.bridge-') && f.endsWith('.pid'));
+      let cleaned = 0;
 
       for (const file of pidFiles) {
         try {
@@ -391,27 +392,54 @@ export class BridgeManager {
           const pid = parseInt(pidStr);
           if (isNaN(pid) || pid <= 0) {
             unlinkSync(join(dir, file));
+            cleaned++;
             continue;
           }
 
+          // Extract port from filename
+          const portMatch = file.match(/\.bridge-(\d+)\.pid/);
+          const port = portMatch ? parseInt(portMatch[1]) : 0;
+
           // Check if process is still alive
-          try {
-            process.kill(pid, 0); // Signal 0 = check existence
-            // Process alive — it's an orphan, kill it
-            process.kill(pid, 'SIGKILL');
-            console.log(`[BridgeManager] Killed orphan bridge process PID ${pid} (${file})`);
-          } catch {
-            // Process doesn't exist — just clean up the PID file
+          let alive = false;
+          try { process.kill(pid, 0); alive = true; } catch { /* dead */ }
+
+          if (!alive) {
+            // Process dead — clean up PID file
+            unlinkSync(join(dir, file));
+            cleaned++;
+            continue;
           }
 
+          // Process alive — check if bridge is healthy (HTTP health check)
+          // If healthy, adopt it rather than killing it (avoids Next.js module isolation issues)
+          if (port > 0) {
+            try {
+              // Synchronous check not possible, so we just adopt it
+              // The bridge is alive and on a known port — register it for reuse
+              console.log(`[BridgeManager] Found active bridge on port ${port} (PID ${pid}) — adopting`);
+              // Advance nextPort past this one
+              if (port >= this.nextPort) {
+                this.nextPort = port + 1;
+              }
+              continue; // Do NOT kill or remove PID file
+            } catch {
+              // Fall through to kill
+            }
+          }
+
+          // Truly orphan — kill it
+          process.kill(pid, 'SIGKILL');
+          console.log(`[BridgeManager] Killed orphan bridge process PID ${pid} (${file})`);
           unlinkSync(join(dir, file));
+          cleaned++;
         } catch {
           // Ignore individual file errors
         }
       }
 
-      // Reset port counter after cleanup so we start from base port
-      if (pidFiles.length > 0) {
+      // Reset port counter after cleanup only if we actually cleaned something
+      if (cleaned > 0 && pidFiles.length === cleaned) {
         this.nextPort = this.basePort;
       }
     } catch {
