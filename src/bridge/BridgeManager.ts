@@ -85,14 +85,18 @@ export class BridgeManager {
   /**
    * Get an existing bridge or create a new one for the given dialect/URI.
    * If a bridge with the same key already exists and is alive, reuse it.
+   * IMPORTANT: Only ONE bridge per dialect/URI — scans ports to reuse existing bridges
+   * across Next.js module contexts.
    */
   async getOrCreate(dialect: DialectType, uri: string, options?: {
     jarDir?: string;
     bridgeJavaFile?: string;
   }): Promise<BridgeInstance> {
     const key = this.buildKey(dialect, uri);
+    const parsed = parseUri(dialect, uri);
+    const jdbcUrl = JdbcNormalizer.composeJdbcUrl(dialect, parsed);
 
-    // Check existing bridge
+    // 1. Check in-memory map first
     if (this.bridges.has(key)) {
       const bridge = this.bridges.get(key)!;
       if (await this.isAlive(bridge)) {
@@ -103,37 +107,21 @@ export class BridgeManager {
       this.removePidFile(bridge.port);
     }
 
+    // 2. Scan known ports to find an existing bridge for this dialect/URI
+    //    This handles Next.js module isolation: bridge started by route A
+    //    is invisible to route B's BridgeManager singleton.
+    const existingBridge = await this.findExistingBridge(dialect, jdbcUrl);
+    if (existingBridge) {
+      this.bridges.set(key, existingBridge);
+      return existingBridge;
+    }
+
     // Anti-loop protection
     this.checkStartAttempts(key);
 
     // Autostart check
     const autostart = process.env.MOSTA_BRIDGE_AUTOSTART ?? 'true';
     if (autostart === 'false') {
-      // Try to detect an existing bridge on the expected port
-      const port = this.getNextPort();
-      if (await this.detectExistingBridge(port)) {
-        const parsed = parseUri(dialect, uri);
-        const jdbcUrl = JdbcNormalizer.composeJdbcUrl(dialect, parsed);
-        const normalizer = new JdbcNormalizer();
-        // Create a "virtual" bridge instance pointing to the manually started bridge
-        const bridge: BridgeInstance = {
-          key,
-          dialect,
-          port,
-          url: `http://localhost:${port}`,
-          pid: 0, // Unknown — manually started
-          jdbcUrl,
-          startedAt: new Date(),
-          normalizer,
-        };
-        // Set normalizer as active without starting a process
-        (normalizer as unknown as { _active: boolean })._active = true;
-        (normalizer as unknown as { bridgeUrl: string }).bridgeUrl = bridge.url;
-        this.bridges.set(key, bridge);
-        console.log(`[BridgeManager] Reusing existing bridge on port ${port} for ${dialect}`);
-        return bridge;
-      }
-
       const info = getJdbcDriverInfo(dialect);
       throw new Error(
         `JDBC bridge disabled (MOSTA_BRIDGE_AUTOSTART=false).\n` +
@@ -144,32 +132,6 @@ export class BridgeManager {
         `    --port ${this.basePort}\n` +
         `Or set MOSTA_BRIDGE_AUTOSTART=true in .env`
       );
-    }
-
-    // Check detect mode — reuse existing if alive
-    if (autostart === 'detect') {
-      const port = this.getNextPort();
-      if (await this.detectExistingBridge(port)) {
-        const parsed = parseUri(dialect, uri);
-        const jdbcUrl = JdbcNormalizer.composeJdbcUrl(dialect, parsed);
-        const normalizer = new JdbcNormalizer();
-        const bridge: BridgeInstance = {
-          key,
-          dialect,
-          port,
-          url: `http://localhost:${port}`,
-          pid: 0,
-          jdbcUrl,
-          startedAt: new Date(),
-          normalizer,
-        };
-        (normalizer as unknown as { _active: boolean })._active = true;
-        (normalizer as unknown as { bridgeUrl: string }).bridgeUrl = bridge.url;
-        this.bridges.set(key, bridge);
-        console.log(`[BridgeManager] Detected existing bridge on port ${port} for ${dialect}`);
-        return bridge;
-      }
-      // Not found — fall through to launch
     }
 
     // Launch a new bridge
@@ -318,6 +280,46 @@ export class BridgeManager {
     }
   }
 
+  /**
+   * Scan ports to find an already-running bridge matching the expected JDBC URL.
+   * Solves Next.js module isolation where different route modules have different singletons.
+   */
+  private async findExistingBridge(dialect: DialectType, expectedJdbcUrl: string): Promise<BridgeInstance | null> {
+    for (let port = this.basePort; port < this.basePort + 10; port++) {
+      try {
+        const res = await fetch(`http://localhost:${port}/health`, {
+          signal: AbortSignal.timeout(1000),
+        });
+        if (!res.ok) continue;
+        const health = (await res.json()) as { jdbcUrl?: string };
+        if (health.jdbcUrl === expectedJdbcUrl) {
+          // Found a matching bridge — adopt it
+          const key = `${dialect}:adopted:${port}`;
+          const normalizer = new JdbcNormalizer();
+          (normalizer as unknown as { _active: boolean })._active = true;
+          (normalizer as unknown as { bridgeUrl: string }).bridgeUrl = `http://localhost:${port}`;
+          const bridge: BridgeInstance = {
+            key,
+            dialect,
+            port,
+            url: `http://localhost:${port}`,
+            pid: 0,
+            jdbcUrl: expectedJdbcUrl,
+            startedAt: new Date(),
+            normalizer,
+          };
+          // Advance nextPort past this one
+          if (port >= this.nextPort) this.nextPort = port + 1;
+          console.log(`[BridgeManager] Adopted existing bridge on port ${port} for ${dialect} (${expectedJdbcUrl})`);
+          return bridge;
+        }
+      } catch {
+        // Not a bridge on this port
+      }
+    }
+    return null;
+  }
+
   private async detectExistingBridge(port: number): Promise<boolean> {
     try {
       const res = await fetch(`http://localhost:${port}/health`, {
@@ -378,69 +380,46 @@ export class BridgeManager {
     }
   }
 
+  /**
+   * Clean up PID files for dead processes only.
+   * NEVER kills alive processes — they may be bridges from other module contexts.
+   * Adjusts nextPort to avoid collisions with alive bridges.
+   */
   private cleanupOrphans(): void {
     try {
       const dir = this.getJarDir();
       if (!existsSync(dir)) return;
 
       const pidFiles = readdirSync(dir).filter(f => f.startsWith('.bridge-') && f.endsWith('.pid'));
-      let cleaned = 0;
 
       for (const file of pidFiles) {
         try {
           const pidStr = readFileSync(join(dir, file), 'utf-8').trim();
           const pid = parseInt(pidStr);
-          if (isNaN(pid) || pid <= 0) {
-            unlinkSync(join(dir, file));
-            cleaned++;
-            continue;
-          }
-
-          // Extract port from filename
           const portMatch = file.match(/\.bridge-(\d+)\.pid/);
           const port = portMatch ? parseInt(portMatch[1]) : 0;
+
+          if (isNaN(pid) || pid <= 0) {
+            unlinkSync(join(dir, file));
+            continue;
+          }
 
           // Check if process is still alive
           let alive = false;
           try { process.kill(pid, 0); alive = true; } catch { /* dead */ }
 
-          if (!alive) {
-            // Process dead — clean up PID file
-            unlinkSync(join(dir, file));
-            cleaned++;
-            continue;
-          }
-
-          // Process alive — check if bridge is healthy (HTTP health check)
-          // If healthy, adopt it rather than killing it (avoids Next.js module isolation issues)
-          if (port > 0) {
-            try {
-              // Synchronous check not possible, so we just adopt it
-              // The bridge is alive and on a known port — register it for reuse
-              console.log(`[BridgeManager] Found active bridge on port ${port} (PID ${pid}) — adopting`);
-              // Advance nextPort past this one
-              if (port >= this.nextPort) {
-                this.nextPort = port + 1;
-              }
-              continue; // Do NOT kill or remove PID file
-            } catch {
-              // Fall through to kill
+          if (alive) {
+            // Process alive — do NOT kill. Advance nextPort to avoid collision.
+            if (port > 0 && port >= this.nextPort) {
+              this.nextPort = port + 1;
             }
+          } else {
+            // Process dead — clean up stale PID file
+            unlinkSync(join(dir, file));
           }
-
-          // Truly orphan — kill it
-          process.kill(pid, 'SIGKILL');
-          console.log(`[BridgeManager] Killed orphan bridge process PID ${pid} (${file})`);
-          unlinkSync(join(dir, file));
-          cleaned++;
         } catch {
           // Ignore individual file errors
         }
-      }
-
-      // Reset port counter after cleanup only if we actually cleaned something
-      if (cleaned > 0 && pidFiles.length === cleaned) {
-        this.nextPort = this.basePort;
       }
     } catch {
       // Non-critical — orphan cleanup is best-effort
