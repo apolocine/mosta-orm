@@ -398,7 +398,7 @@ export class BridgeManager {
           try {
             process.kill(pid, 0); // Signal 0 = check existence
             // Process alive — it's an orphan, kill it
-            process.kill(pid, 'SIGTERM');
+            process.kill(pid, 'SIGKILL');
             console.log(`[BridgeManager] Killed orphan bridge process PID ${pid} (${file})`);
           } catch {
             // Process doesn't exist — just clean up the PID file
@@ -408,6 +408,11 @@ export class BridgeManager {
         } catch {
           // Ignore individual file errors
         }
+      }
+
+      // Reset port counter after cleanup so we start from base port
+      if (pidFiles.length > 0) {
+        this.nextPort = this.basePort;
       }
     } catch {
       // Non-critical — orphan cleanup is best-effort
