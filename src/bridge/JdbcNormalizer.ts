@@ -75,15 +75,15 @@ export function parseUri(dialect: DialectType, uri: string): Omit<JdbcBridgeConf
   const defaultUser = info?.defaultUser ?? 'SA';
   const defaultPassword = info?.defaultPassword ?? '';
 
-  // Handle hsqldb:hsql://host:port/db
-  const hsqlMatch = uri.match(/^hsqldb:hsql:\/\/([^:/]+)(?::(\d+))?(?:\/(.*))?$/);
+  // Handle hsqldb:hsql://[user:pass@]host:port/db
+  const hsqlMatch = uri.match(/^hsqldb:hsql:\/\/(?:([^:@]+)(?::([^@]*))?@)?([^:/]+)(?::(\d+))?(?:\/(.*))?$/);
   if (hsqlMatch) {
     return {
-      host: hsqlMatch[1],
-      port: hsqlMatch[2] ? parseInt(hsqlMatch[2]) : defaultPort,
-      database: hsqlMatch[3] || '',
-      user: defaultUser,
-      password: defaultPassword,
+      host: hsqlMatch[3],
+      port: hsqlMatch[4] ? parseInt(hsqlMatch[4]) : defaultPort,
+      database: hsqlMatch[5] || '',
+      user: hsqlMatch[1] ? decodeURIComponent(hsqlMatch[1]) : defaultUser,
+      password: hsqlMatch[2] !== undefined ? decodeURIComponent(hsqlMatch[2]) : defaultPassword,
     };
   }
 
