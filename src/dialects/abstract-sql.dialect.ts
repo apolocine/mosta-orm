@@ -183,10 +183,29 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   /** Serialize date values to a format suitable for this dialect */
   protected serializeDate(value: unknown): unknown {
-    if (value === 'now') return new Date().toISOString();
-    if (value instanceof Date) return value.toISOString();
-    if (typeof value === 'string') return value;
-    return null;
+    let d: Date | null = null;
+    if (value === 'now') d = new Date();
+    else if (value instanceof Date) d = value;
+    else if (typeof value === 'string') {
+      // If going through JDBC bridge, normalize ISO strings to JDBC format
+      if (this.jdbcBridgeActive) {
+        d = new Date(value);
+        if (isNaN(d.getTime())) return value;
+      } else {
+        return value;
+      }
+    }
+    if (!d) return null;
+    // JDBC dialects need 'yyyy-MM-dd HH:mm:ss' format (no T, no Z)
+    if (this.jdbcBridgeActive) {
+      return d.getFullYear() + '-' +
+        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+        String(d.getDate()).padStart(2, '0') + ' ' +
+        String(d.getHours()).padStart(2, '0') + ':' +
+        String(d.getMinutes()).padStart(2, '0') + ':' +
+        String(d.getSeconds()).padStart(2, '0');
+    }
+    return d.toISOString();
   }
 
   /** Serialize JSON/array values */
@@ -465,7 +484,7 @@ export abstract class AbstractSqlDialect implements IDialect {
       } else if (field.default !== undefined) {
         columns.push(name);
         placeholders.push(this.nextPlaceholder());
-        const def = field.default === 'now' ? new Date().toISOString() : field.default;
+        const def = field.default === 'now' ? this.serializeDate('now') : field.default;
         values.push(this.serializeValue(def, field));
       }
     }
@@ -489,7 +508,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     }
 
     if (schema.timestamps) {
-      const now = new Date().toISOString();
+      const now = this.serializeDate('now');
       if (!columns.includes('createdAt')) {
         columns.push('createdAt');
         placeholders.push(this.nextPlaceholder());
@@ -532,14 +551,14 @@ export abstract class AbstractSqlDialect implements IDialect {
         }
       } else if (key === 'createdAt' || key === 'updatedAt') {
         setClauses.push(`${this.quoteIdentifier(key)} = ${this.nextPlaceholder()}`);
-        values.push(val instanceof Date ? val.toISOString() : val);
+        values.push(this.serializeDate(val));
       }
     }
 
     // Auto-update updatedAt
     if (schema.timestamps && !setClauses.some(c => c.includes(this.quoteIdentifier('updatedAt')))) {
       setClauses.push(`${this.quoteIdentifier('updatedAt')} = ${this.nextPlaceholder()}`);
-      values.push(new Date().toISOString());
+      values.push(this.serializeDate('now'));
     }
 
     return { setClauses, values };
@@ -1144,7 +1163,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       if (schema.timestamps) {
         sql += `, ${this.quoteIdentifier('updatedAt')} = ${this.nextPlaceholder()}`;
-        params.push(new Date().toISOString());
+        params.push(this.serializeDate('now'));
       }
 
       sql += ` WHERE ${this.quoteIdentifier('id')} = ${this.nextPlaceholder()}`;
@@ -1216,7 +1235,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       if (schema.timestamps) {
         sql += `, ${this.quoteIdentifier('updatedAt')} = ${this.nextPlaceholder()}`;
-        params.push(new Date().toISOString());
+        params.push(this.serializeDate('now'));
       }
 
       sql += ` WHERE ${this.quoteIdentifier('id')} = ${this.nextPlaceholder()}`;
@@ -1274,7 +1293,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       if (schema.timestamps) {
         sql += `, ${this.quoteIdentifier('updatedAt')} = ${this.nextPlaceholder()}`;
-        params.push(new Date().toISOString());
+        params.push(this.serializeDate('now'));
       }
 
       sql += ` WHERE ${this.quoteIdentifier('id')} = ${this.nextPlaceholder()}`;
