@@ -137,16 +137,20 @@ export async function disconnectDialect(): Promise<void> {
  * Test the connection with a given config without changing the active dialect.
  * Used by the setup wizard to validate before committing.
  */
-export async function testConnection(config: ConnectionConfig): Promise<boolean> {
+export async function testConnection(config: ConnectionConfig): Promise<{ ok: boolean; error?: string }> {
   try {
     const mod = await loadDialectModule(config.dialect);
     const dialect = mod.createDialect();
     await dialect.connect(config);
     const ok = await dialect.testConnection();
     await dialect.disconnect();
-    return ok;
-  } catch {
-    return false;
+    if (!ok) {
+      return { ok: false, error: 'Connection test returned false (SELECT 1 failed or driver test failed)' };
+    }
+    return { ok: true };
+  } catch (e: unknown) {
+    const error = e instanceof Error ? e.message : String(e);
+    return { ok: false, error };
   }
 }
 

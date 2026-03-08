@@ -143,7 +143,7 @@ class OracleDialect extends AbstractSqlDialect {
 
   // --- Query execution ---
 
-  async executeQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
+  async doExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
     if (!this.pool) throw new Error('Oracle not connected. Call connect() first.');
     const conn = await (this.pool as {
       getConnection(): Promise<{
@@ -159,7 +159,7 @@ class OracleDialect extends AbstractSqlDialect {
     }
   }
 
-  async executeRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
+  async doExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
     if (!this.pool) throw new Error('Oracle not connected. Call connect() first.');
     const conn = await (this.pool as {
       getConnection(): Promise<{

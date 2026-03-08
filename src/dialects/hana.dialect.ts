@@ -127,7 +127,7 @@ class HANADialect extends AbstractSqlDialect {
 
   // --- Query execution ---
 
-  async executeQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
+  async doExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
     if (!this.conn) throw new Error('HANA not connected. Call connect() first.');
     return new Promise<T[]>((resolve, reject) => {
       (this.conn as {
@@ -139,7 +139,7 @@ class HANADialect extends AbstractSqlDialect {
     });
   }
 
-  async executeRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
+  async doExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
     if (!this.conn) throw new Error('HANA not connected. Call connect() first.');
     return new Promise<{ changes: number }>((resolve, reject) => {
       (this.conn as {

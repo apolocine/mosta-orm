@@ -88,7 +88,7 @@ class SybaseDialect extends MSSQLDialect {
     return true;
   }
 
-  async executeQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
+  async doExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
     if (!this.pool) throw new Error('Sybase not connected. Call connect() first.');
     // Sybase driver doesn't support named params — replace @pN with values
     const resolvedSql = this.resolveParams(sql, params);
@@ -96,7 +96,7 @@ class SybaseDialect extends MSSQLDialect {
     return Array.isArray(result) ? result : [];
   }
 
-  async executeRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
+  async doExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
     if (!this.pool) throw new Error('Sybase not connected. Call connect() first.');
     const resolvedSql = this.resolveParams(sql, params);
     const result = await (this.pool as { query(sql: string): Promise<{ rowsAffected?: number }> }).query(resolvedSql);

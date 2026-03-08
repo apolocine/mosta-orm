@@ -1,6 +1,7 @@
 // Abstract SQL Dialect — base class for all SQL dialects
 // Inspired by org.hibernate.dialect.Dialect (Hibernate ORM 6.4)
 // Extracts ~80% of shared SQL logic from sqlite.dialect.ts
+// Includes JDBC bridge support via JdbcNormalizer (transparent interception)
 // Author: Dr Hamid MADANI drmdh@msn.com
 
 import { randomUUID } from 'crypto';
@@ -16,6 +17,9 @@ import type {
   AggregateStage,
   AggregateGroupStage,
 } from '../core/types.js';
+import { JdbcNormalizer } from '../bridge/JdbcNormalizer.js';
+import { hasJdbcDriver } from '../bridge/jdbc-registry.js';
+import { BridgeManager, type BridgeInstance } from '../bridge/BridgeManager.js';
 
 // ============================================================
 // SQL Logging — inspired by hibernate.show_sql / hibernate.format_sql
@@ -94,11 +98,25 @@ export abstract class AbstractSqlDialect implements IDialect {
   /** Get the SQL column type for the primary key (id) column */
   abstract getIdColumnType(): string;
 
-  /** Execute a SELECT query, return rows */
-  abstract executeQuery<T>(sql: string, params: unknown[]): Promise<T[]>;
+  /** Execute a SELECT query via the dialect's native driver (npm) */
+  abstract doExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]>;
 
-  /** Execute a non-SELECT statement (INSERT/UPDATE/DELETE), return changes count */
-  abstract executeRun(sql: string, params: unknown[]): Promise<{ changes: number }>;
+  /** Execute a non-SELECT statement via the dialect's native driver (npm) */
+  abstract doExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }>;
+
+  // --- Concrete query methods with JDBC bridge interception ---
+
+  /** Execute a SELECT query — routes to JDBC bridge or native driver */
+  async executeQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
+    if (this.jdbcBridgeActive) return this.bridgeExecuteQuery<T>(sql, params);
+    return this.doExecuteQuery<T>(sql, params);
+  }
+
+  /** Execute a non-SELECT statement — routes to JDBC bridge or native driver */
+  async executeRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
+    if (this.jdbcBridgeActive) return this.bridgeExecuteRun(sql, params);
+    return this.doExecuteRun(sql, params);
+  }
 
   /** Establish the actual database connection */
   abstract doConnect(config: ConnectionConfig): Promise<void>;
@@ -119,6 +137,10 @@ export abstract class AbstractSqlDialect implements IDialect {
   protected showSql = false;
   protected formatSql = false;
   private paramCounter = 0;
+
+  // --- JDBC Bridge state (transparent interception) ---
+  private bridgeInstance: BridgeInstance | null = null;
+  private jdbcBridgeActive = false;
 
   // --- Hooks (overridable by subclasses) ---
 
@@ -591,8 +613,24 @@ export abstract class AbstractSqlDialect implements IDialect {
     this.showSql = config.showSql ?? false;
     this.formatSql = config.formatSql ?? false;
 
-    await this.doConnect(config);
-    this.log('CONNECT', config.uri);
+    // --- JDBC Bridge interception via BridgeManager ---
+    // If a JDBC JAR is available for this dialect, use the bridge
+    // instead of calling the dialect's doConnect() (npm driver).
+    // BridgeManager handles multi-bridge, port management, PID files, autostart.
+    const jarDir = config.options?.jarDir as string | undefined;
+    if (hasJdbcDriver(this.dialectType) && JdbcNormalizer.isAvailable(this.dialectType, jarDir)) {
+      const manager = BridgeManager.getInstance();
+      this.bridgeInstance = await manager.getOrCreate(this.dialectType, config.uri, {
+        jarDir,
+        bridgeJavaFile: config.options?.bridgeJavaFile as string | undefined,
+      });
+      this.jdbcBridgeActive = true;
+      this.log('CONNECT', `${config.uri} [via JDBC bridge on port ${this.bridgeInstance.port}]`);
+    } else {
+      // No JAR found — use the dialect's native npm driver
+      await this.doConnect(config);
+      this.log('CONNECT', config.uri);
+    }
 
     if (config.schemaStrategy === 'create') {
       this.log('SCHEMA', 'create — dropping existing tables');
@@ -606,7 +644,16 @@ export abstract class AbstractSqlDialect implements IDialect {
       await this.dropAllTables();
     }
 
-    await this.doDisconnect();
+    if (this.jdbcBridgeActive && this.bridgeInstance) {
+      // Do NOT stop the bridge — BridgeManager manages its lifecycle.
+      // Other dialect instances may reuse the same bridge.
+      // Bridges are stopped by BridgeManager.stopAll() on app exit.
+      this.bridgeInstance = null;
+      this.jdbcBridgeActive = false;
+    } else {
+      await this.doDisconnect();
+    }
+
     this.config = null;
     this.schemas = [];
     this.log('DISCONNECT', '');
@@ -614,10 +661,47 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   async testConnection(): Promise<boolean> {
     try {
+      if (this.jdbcBridgeActive && this.bridgeInstance) {
+        // Use dialect-appropriate ping query
+        const pingQuery = this.dialectType === 'hsqldb'
+          ? 'SELECT 1 FROM INFORMATION_SCHEMA.SYSTEM_USERS'
+          : this.dialectType === 'oracle'
+            ? 'SELECT 1 FROM DUAL'
+            : 'SELECT 1';
+        const result = await this.bridgeInstance.normalizer.query<unknown[]>(pingQuery, []);
+        return Array.isArray(result);
+      }
       return await this.doTestConnection();
-    } catch {
+    } catch (err) {
+      console.error(`[${this.dialectType}] testConnection failed:`, err instanceof Error ? err.message : err);
       return false;
     }
+  }
+
+  // --- JDBC Bridge query methods (used by executeQuery/executeRun interception) ---
+
+  /**
+   * Execute a SELECT query via the JDBC bridge.
+   * Called transparently when jdbcBridgeActive is true.
+   */
+  protected async bridgeExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
+    if (!this.bridgeInstance) throw new Error('JDBC bridge not initialized');
+    return this.bridgeInstance.normalizer.query<T[]>(sql, params);
+  }
+
+  /**
+   * Execute a non-SELECT statement via the JDBC bridge.
+   * Called transparently when jdbcBridgeActive is true.
+   */
+  protected async bridgeExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
+    if (!this.bridgeInstance) throw new Error('JDBC bridge not initialized');
+    const result = await this.bridgeInstance.normalizer.query<{ changes?: number }>(sql, params);
+    return { changes: (result as { changes?: number })?.changes ?? 0 };
+  }
+
+  /** Whether the JDBC bridge is active for this dialect instance */
+  protected get isJdbcBridgeActive(): boolean {
+    return this.jdbcBridgeActive;
   }
 
   // --- Schema management (hibernate.hbm2ddl.auto) ---

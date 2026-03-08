@@ -170,7 +170,7 @@ class SpannerDialect extends AbstractSqlDialect {
 
   // --- Query execution ---
 
-  async executeQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
+  async doExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
     if (!this.database) throw new Error('Spanner not connected. Call connect() first.');
 
     // Build named params object: { p1: val1, p2: val2, ... }
@@ -192,7 +192,7 @@ class SpannerDialect extends AbstractSqlDialect {
     });
   }
 
-  async executeRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
+  async doExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
     if (!this.database) throw new Error('Spanner not connected. Call connect() first.');
 
     // For DML operations, Spanner requires using transactions
