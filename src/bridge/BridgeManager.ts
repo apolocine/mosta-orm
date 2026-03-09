@@ -208,10 +208,36 @@ export class BridgeManager {
     jarDir?: string;
     bridgeJavaFile?: string;
   }): Promise<BridgeInstance> {
+    const parsed = parseUri(dialect, uri);
+    const expectedJdbcUrl = JdbcNormalizer.composeJdbcUrl(dialect, parsed);
     const port = this.getNextPort();
 
     // Check port availability
     if (await this.detectExistingBridge(port)) {
+      // Port taken — check if the existing bridge serves the same JDBC URL
+      try {
+        const res = await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(1000) });
+        if (res.ok) {
+          const health = (await res.json()) as { jdbcUrl?: string };
+          if (health.jdbcUrl === expectedJdbcUrl) {
+            // Same JDBC URL — adopt this bridge instead of creating a duplicate
+            const key = this.buildKey(dialect, uri);
+            const normalizer = new JdbcNormalizer();
+            (normalizer as unknown as { _active: boolean })._active = true;
+            (normalizer as unknown as { bridgeUrl: string }).bridgeUrl = `http://localhost:${port}`;
+            const bridge: BridgeInstance = {
+              key, dialect, port,
+              url: `http://localhost:${port}`,
+              pid: 0, jdbcUrl: expectedJdbcUrl,
+              startedAt: new Date(), normalizer,
+            };
+            this.bridges.set(key, bridge);
+            console.log(`[BridgeManager] Adopted existing bridge on port ${port} (same JDBC URL)`);
+            return bridge;
+          }
+        }
+      } catch { /* not responding properly — increment */ }
+
       if (!this.portIncrement) {
         throw new Error(
           `Port ${port} already in use.\n` +
@@ -220,8 +246,6 @@ export class BridgeManager {
           `or stop the process using port ${port}: lsof -i :${port}`
         );
       }
-      // Port taken — increment was already handled by getNextPort()
-      // but if we detect it's in use, try next
       this.nextPort++;
       return this.startBridge(dialect, uri, options);
     }
@@ -233,9 +257,8 @@ export class BridgeManager {
       bridgeJavaFile: options?.bridgeJavaFile,
     });
 
-    const parsed = parseUri(dialect, uri);
-    const jdbcUrl = JdbcNormalizer.composeJdbcUrl(dialect, parsed);
     const pid = (normalizer as unknown as { process: { pid?: number } | null }).process?.pid ?? 0;
+    const jdbcUrl = expectedJdbcUrl;
 
     const key = this.buildKey(dialect, uri);
     const bridge: BridgeInstance = {

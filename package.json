@@ -1,6 +1,6 @@
 {
   "name": "@mostajs/orm",
-  "version": "1.4.9",
+  "version": "1.4.11",
   "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
   "license": "MIT",
