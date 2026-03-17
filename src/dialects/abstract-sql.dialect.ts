@@ -181,6 +181,11 @@ export abstract class AbstractSqlDialect implements IDialect {
       : `CREATE ${u}INDEX ${q}`;
   }
 
+  /** Execute a CREATE INDEX statement — overridable for dialects needing try/catch */
+  protected async executeIndexStatement(stmt: string): Promise<void> {
+    await this.executeRun(stmt, []);
+  }
+
   /** Serialize date values to a format suitable for this dialect */
   protected serializeDate(value: unknown): unknown {
     let d: Date | null = null;
@@ -754,7 +759,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       const indexStatements = this.generateIndexes(schema);
       for (const stmt of indexStatements) {
-        await this.executeRun(stmt, []);
+        await this.executeIndexStatement(stmt);
       }
     }
 

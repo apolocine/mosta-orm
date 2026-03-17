@@ -64,6 +64,18 @@ class OracleDialect extends AbstractSqlDialect {
   protected supportsIfNotExists(): boolean { return false; }
   protected supportsReturning(): boolean { return false; }
 
+  // Oracle: pass native Date objects — oracledb handles binding correctly
+  protected serializeDate(value: unknown): unknown {
+    if (value === 'now') return new Date();
+    if (value instanceof Date) return value;
+    if (typeof value === 'string') {
+      const parsed = new Date(value);
+      if (!isNaN(parsed.getTime())) return parsed;
+      return value;
+    }
+    return null;
+  }
+
   // Oracle NUMBER(1): 1 = true, 0 = false
   protected serializeBoolean(v: boolean): unknown { return v ? 1 : 0; }
   protected deserializeBoolean(v: unknown): boolean {
@@ -110,11 +122,21 @@ class OracleDialect extends AbstractSqlDialect {
       (this.oracledb as { outFormat: number }).outFormat = (this.oracledb as { OUT_FORMAT_OBJECT: number }).OUT_FORMAT_OBJECT;
       (this.oracledb as { autoCommit: boolean }).autoCommit = true;
 
-      this.pool = await (this.oracledb as { createPool(opts: unknown): Promise<unknown> }).createPool({
-        connectString: config.uri,
+      // Parse oracle:// URI to extract user, password, connectString
+      const poolOpts: Record<string, unknown> = {
         poolMax: config.poolSize ?? 10,
         poolMin: 2,
-      });
+      };
+      const uriMatch = config.uri.match(/^oracle:\/\/([^:]+):([^@]+)@(.+)$/);
+      if (uriMatch) {
+        poolOpts.user = uriMatch[1];
+        poolOpts.password = uriMatch[2];
+        poolOpts.connectString = uriMatch[3]; // host:port/service
+      } else {
+        poolOpts.connectString = config.uri;
+      }
+
+      this.pool = await (this.oracledb as { createPool(opts: unknown): Promise<unknown> }).createPool(poolOpts);
     } catch (e: unknown) {
       throw new Error(
         `Oracle driver not found. Install it: npm install oracledb\n` +
@@ -239,6 +261,41 @@ class OracleDialect extends AbstractSqlDialect {
         }
       }
     }
+  }
+
+  // Oracle returns column names in UPPERCASE by default
+  // Override count to handle CNT vs cnt
+  async count(schema: import('../core/types.js').EntitySchema, filter: import('../core/types.js').FilterQuery): Promise<number> {
+    this.resetParams();
+    const where = this.translateFilter(filter, schema);
+    const table = this.quoteIdentifier(schema.collection);
+    const sql = `SELECT COUNT(*) as cnt FROM ${table} WHERE ${where.sql}`;
+    this.log('COUNT', schema.collection, { sql, params: where.params });
+    const rows = await this.executeQuery<Record<string, unknown>>(sql, where.params);
+    if (rows.length === 0) return 0;
+    // Oracle returns uppercase column names: CNT or cnt depending on outFormat
+    const row = rows[0];
+    const val = row.CNT ?? row.cnt ?? row.COUNT ?? row['COUNT(*)'];
+    return Number(val) || 0;
+  }
+
+  // Oracle uppercase column mapping: normalize row keys to schema field names
+  protected deserializeRow(row: Record<string, unknown>, schema: import('../core/types.js').EntitySchema): Record<string, unknown> {
+    if (!row) return row;
+    // Oracle returns UPPERCASE keys — normalize before calling parent deserialize
+    const upperToField: Record<string, string> = { ID: 'id', CREATEDAT: 'createdAt', UPDATEDAT: 'updatedAt' };
+    for (const fieldName of Object.keys(schema.fields)) {
+      upperToField[fieldName.toUpperCase()] = fieldName;
+    }
+    for (const [relName] of Object.entries(schema.relations || {})) {
+      upperToField[relName.toUpperCase()] = relName;
+    }
+    const normalized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      const mapped = upperToField[key] ?? upperToField[key.toUpperCase()] ?? key;
+      normalized[mapped] = value;
+    }
+    return super.deserializeRow(normalized, schema);
   }
 
   protected getDialectLabel(): string { return 'Oracle'; }

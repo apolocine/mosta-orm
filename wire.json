@@ -1,0 +1,11 @@
+{
+  "name": "orm",
+  "package": "@mostajs/orm",
+  "version": "2.0.0",
+  "type": "core",
+  "priority": 0,
+  "displayName": "MostaORM",
+  "description": "Multi-dialect ORM — schema registry, repository pattern, 13 databases",
+  "icon": "Database",
+  "register": "./dist/register.js"
+}

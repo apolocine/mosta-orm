@@ -87,7 +87,12 @@ function buildMongooseSchema(entity: EntitySchema): Schema {
     }
 
     if (field.required) schemaDef.required = true;
-    if (field.unique) schemaDef.unique = true;
+    if (field.unique) {
+      schemaDef.unique = true;
+      // MongoDB treats null as a value in unique indexes — if the field
+      // is not required, auto-enable sparse so multiple nulls are allowed.
+      if (!field.required) schemaDef.sparse = true;
+    }
     if (field.sparse) schemaDef.sparse = true;
     if (field.lowercase) schemaDef.lowercase = true;
     if (field.trim) schemaDef.trim = true;
@@ -258,6 +263,13 @@ class MongoDialect implements IDialect {
     }
 
     modelCache.clear();
+    // Clear mongoose model registry to allow clean reconnection
+    for (const name of Object.keys(mongoose.models)) {
+      delete mongoose.models[name];
+    }
+    for (const name of mongoose.modelNames()) {
+      mongoose.deleteModel(name);
+    }
     await mongoose.disconnect();
     logQuery('DISCONNECT', '');
   }
@@ -486,12 +498,15 @@ class MongoDialect implements IDialect {
   ): Promise<Record<string, unknown>> {
     const model = getModel(schema);
     logQuery('INCREMENT', schema.collection, { id, field, amount });
-    const result = await model.findByIdAndUpdate(
-      id,
+    // Determine if id is a valid ObjectId or a plain string (e.g. counter keys)
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+    const filter = { _id: isObjectId ? new mongoose.Types.ObjectId(id) : id } as any;
+    const result = await model.collection.findOneAndUpdate(
+      filter,
       { $inc: { [field]: amount } },
       { returnDocument: 'after', upsert: true },
-    ).lean();
-    return result as Record<string, unknown>;
+    );
+    return (result ?? {}) as Record<string, unknown>;
   }
 
   // --- Array operations (equivalent Hibernate @ElementCollection management) ---
