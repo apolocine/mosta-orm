@@ -56,9 +56,9 @@ class MariaDBDialect extends MySQLDialect {
         );
       }
       return rows;
-    } catch {
-      // Fallback: try mysql2-style execute
-      return super.executeQuery<T>(sql, params);
+    } catch (err: unknown) {
+      // Rethrow mariadb errors instead of silently falling back
+      throw err;
     }
   }
 
@@ -67,8 +67,8 @@ class MariaDBDialect extends MySQLDialect {
     try {
       const result = await (this.pool as { query(sql: string, params: unknown[]): Promise<{ affectedRows?: number }> }).query(sql, params);
       return { changes: (result as { affectedRows?: number }).affectedRows ?? 0 };
-    } catch {
-      return super.executeRun(sql, params);
+    } catch (err: unknown) {
+      throw err;
     }
   }
 

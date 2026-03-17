@@ -9,6 +9,21 @@ export function normalizeDoc<T = Record<string, unknown>>(doc: any): T {
   if (!doc) return doc;
   const { _id, __v, ...rest } = doc;
   const id = _id?.toString?.() ?? _id ?? rest.id;
+
+  // Recursively normalize populated sub-documents and arrays
+  for (const key of Object.keys(rest)) {
+    const val = rest[key];
+    if (val && typeof val === 'object' && !Array.isArray(val) && val._id !== undefined) {
+      rest[key] = normalizeDoc(val);
+    } else if (Array.isArray(val)) {
+      rest[key] = val.map((item: any) =>
+        item && typeof item === 'object' && item._id !== undefined
+          ? normalizeDoc(item)
+          : item
+      );
+    }
+  }
+
   return { id, ...rest } as T;
 }
 
