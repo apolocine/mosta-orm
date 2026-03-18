@@ -10,6 +10,7 @@ import type {
   FilterQuery as DALFilter,
   QueryOptions,
   AggregateStage,
+  AggregateGroupStage,
 } from '../core/types.js';
 
 // ============================================================
@@ -421,7 +422,19 @@ class MongoDialect implements IDialect {
     });
 
     logQuery('AGGREGATE', schema.collection, pipeline);
-    return model.aggregate(pipeline) as unknown as Promise<T[]>;
+    const results = await model.aggregate(pipeline);
+
+    // Normalize: rename _id → original field name from _by
+    const groupStage = stages.find(s => '$group' in s) as AggregateGroupStage | undefined;
+    const byField = groupStage?.$group?._by as string | undefined;
+    if (byField) {
+      return results.map((r: any) => {
+        const { _id, ...rest } = r;
+        return { [byField]: _id, ...rest };
+      }) as T[];
+    }
+
+    return results as unknown as T[];
   }
 
   // --- Relations (equivalent Hibernate eager/lazy loading via populate) ---

@@ -174,3 +174,113 @@ export async function createConnection(
   }
   return getDialect(config);
 }
+
+// ============================================================
+// Database creation
+// ============================================================
+
+/** System/default database used to connect before CREATE DATABASE */
+const SYSTEM_DB: Partial<Record<DialectType, string>> = {
+  postgres: 'postgres',
+  cockroachdb: 'postgres',
+  mysql: 'mysql',
+  mariadb: 'mysql',
+  mssql: 'master',
+  oracle: 'XEPDB1',
+  db2: 'SAMPLE',
+  hana: 'SYSTEM',
+  hsqldb: 'xdb',
+  sybase: 'master',
+};
+
+/** DDL to create a database, per dialect family */
+function getCreateDDL(dialect: DialectType, dbName: string): string {
+  switch (dialect) {
+    case 'mysql':
+    case 'mariadb':
+      return `CREATE DATABASE IF NOT EXISTS \`${dbName}\``;
+    case 'mssql':
+      return `IF NOT EXISTS (SELECT * FROM sys.databases WHERE name='${dbName}') CREATE DATABASE [${dbName}]`;
+    default:
+      // postgres, cockroachdb, db2, hana, hsqldb, sybase, oracle
+      return `CREATE DATABASE "${dbName}"`;
+  }
+}
+
+/** Error codes that mean "database already exists" */
+function isAlreadyExistsError(dialect: DialectType, err: any): boolean {
+  const msg = (err?.message || '').toLowerCase();
+  const code = err?.code || '';
+  return (
+    code === '42P04' ||                          // PostgreSQL
+    msg.includes('already exists') ||
+    msg.includes('database exists') ||
+    msg.includes('existe déjà') ||
+    (dialect === 'mysql' && code === 'ER_DB_CREATE_EXISTS') ||
+    (dialect === 'mssql' && msg.includes('already exists'))
+  );
+}
+
+/**
+ * Create a database if it does not exist.
+ *
+ * - **mongodb**: no-op (auto-created on first write)
+ * - **sqlite**: no-op (file auto-created)
+ * - **spanner**: not supported (use gcloud CLI)
+ * - **SQL dialects**: connects to the system DB, runs CREATE DATABASE
+ *
+ * @param dialect  - target dialect
+ * @param uri      - full connection URI to the TARGET database (used to extract credentials)
+ * @param dbName   - name of the database to create
+ */
+export async function createDatabase(
+  dialect: DialectType,
+  uri: string,
+  dbName: string,
+): Promise<{ ok: boolean; detail?: string; error?: string }> {
+  // Auto-created dialects
+  if (dialect === 'mongodb') {
+    return { ok: true, detail: 'MongoDB: auto-created on first write' };
+  }
+  if (dialect === 'sqlite') {
+    return { ok: true, detail: 'SQLite: file auto-created' };
+  }
+  if (dialect === 'spanner') {
+    return { ok: false, error: 'Cloud Spanner: create via gcloud CLI' };
+  }
+
+  // Build a URI pointing to the system DB (same host/credentials, different DB name)
+  const systemDbName = SYSTEM_DB[dialect] || 'postgres';
+  const systemUri = uri.replace(
+    /\/([^/?]+)(\?|$)/,
+    `/${systemDbName}$2`,
+  );
+
+  try {
+    // Load dialect, connect to system DB
+    const mod = await loadDialectModule(dialect);
+    const d = mod.createDialect();
+
+    await d.connect({
+      dialect,
+      uri: systemUri,
+      schemaStrategy: 'none',
+    });
+
+    // Run CREATE DATABASE
+    const ddl = getCreateDDL(dialect, dbName);
+    try {
+      await (d as any).executeRun(ddl, []);
+      await d.disconnect();
+      return { ok: true, detail: `Database "${dbName}" created` };
+    } catch (err: any) {
+      await d.disconnect();
+      if (isAlreadyExistsError(dialect, err)) {
+        return { ok: true, detail: `Database "${dbName}" already exists` };
+      }
+      return { ok: false, error: err.message };
+    }
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
