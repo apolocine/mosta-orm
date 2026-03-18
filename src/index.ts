@@ -70,6 +70,7 @@ export {
   disconnectDialect,
   testConnection,
   createConnection,
+  createDatabase,
 } from './core/factory.js';
 
 // ============================================================

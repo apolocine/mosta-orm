@@ -384,14 +384,22 @@ export abstract class AbstractSqlDialect implements IDialect {
         if ('$lt' in op) { conditions.push(`${col} < ${this.nextPlaceholder()}`); params.push(this.serializeForFilter(op.$lt, key, schema)); }
         if ('$lte' in op) { conditions.push(`${col} <= ${this.nextPlaceholder()}`); params.push(this.serializeForFilter(op.$lte, key, schema)); }
         if ('$in' in op && Array.isArray(op.$in)) {
-          const placeholders = op.$in.map(() => this.nextPlaceholder()).join(', ');
-          conditions.push(`${col} IN (${placeholders})`);
-          for (const v of op.$in) params.push(this.serializeForFilter(v, key, schema));
+          if (op.$in.length === 0) {
+            conditions.push('1=0'); // empty IN → always false, 0 results
+          } else {
+            const placeholders = op.$in.map(() => this.nextPlaceholder()).join(', ');
+            conditions.push(`${col} IN (${placeholders})`);
+            for (const v of op.$in) params.push(this.serializeForFilter(v, key, schema));
+          }
         }
         if ('$nin' in op && Array.isArray(op.$nin)) {
-          const placeholders = op.$nin.map(() => this.nextPlaceholder()).join(', ');
-          conditions.push(`${col} NOT IN (${placeholders})`);
-          for (const v of op.$nin) params.push(this.serializeForFilter(v, key, schema));
+          if (op.$nin.length === 0) {
+            // empty NOT IN → exclude nothing, no filter needed
+          } else {
+            const placeholders = op.$nin.map(() => this.nextPlaceholder()).join(', ');
+            conditions.push(`${col} NOT IN (${placeholders})`);
+            for (const v of op.$nin) params.push(this.serializeForFilter(v, key, schema));
+          }
         }
         if ('$regex' in op) {
           const pattern = regexToLike(op.$regex as string);
@@ -995,9 +1003,9 @@ export abstract class AbstractSqlDialect implements IDialect {
           if (key === '_by') {
             if (val) {
               groupBy = this.quoteIdentifier(val as string);
-              selectCols.push(`${groupBy} as ${this.quoteIdentifier('_id')}`);
+              selectCols.push(`${groupBy} as ${this.quoteIdentifier(val as string)}`);
             } else {
-              selectCols.push(`NULL as ${this.quoteIdentifier('_id')}`);
+              selectCols.push(`NULL as ${this.quoteIdentifier('_group')}`);
             }
           } else if (val && typeof val === 'object') {
             const acc = val as Record<string, unknown>;
