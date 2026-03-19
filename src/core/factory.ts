@@ -245,6 +245,9 @@ export async function createDatabase(
   if (dialect === 'sqlite') {
     return { ok: true, detail: 'SQLite: file auto-created' };
   }
+  if (dialect === 'oracle') {
+    return { ok: true, detail: 'Oracle: tables are created in the connected user schema (PDB service)' };
+  }
   if (dialect === 'spanner') {
     return { ok: false, error: 'Cloud Spanner: create via gcloud CLI' };
   }

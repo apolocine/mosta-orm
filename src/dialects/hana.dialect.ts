@@ -18,6 +18,7 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 
 const HANA_TYPE_MAP: Record<string, string> = {
   string:  'NVARCHAR(5000)',
+  text:    'NCLOB',
   number:  'DOUBLE',
   boolean: 'BOOLEAN',
   date:    'TIMESTAMP',

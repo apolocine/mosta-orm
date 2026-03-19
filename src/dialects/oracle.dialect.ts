@@ -19,6 +19,7 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 
 const ORACLE_TYPE_MAP: Record<string, string> = {
   string:  'VARCHAR2(4000)',
+  text:    'CLOB',
   number:  'NUMBER',
   boolean: 'NUMBER(1)',
   date:    'TIMESTAMP',
@@ -121,6 +122,12 @@ class OracleDialect extends AbstractSqlDialect {
       this.oracledb = oracledb.default || oracledb;
       (this.oracledb as { outFormat: number }).outFormat = (this.oracledb as { OUT_FORMAT_OBJECT: number }).OUT_FORMAT_OBJECT;
       (this.oracledb as { autoCommit: boolean }).autoCommit = true;
+      // Fetch CLOB columns as strings — without this, oracledb returns Lob objects
+      // that carry circular references (ConnectDescription) and break JSON.stringify()
+      const DB_TYPE_CLOB = (this.oracledb as { DB_TYPE_CLOB?: number }).DB_TYPE_CLOB;
+      if (DB_TYPE_CLOB) {
+        (this.oracledb as { fetchAsString: number[] }).fetchAsString = [DB_TYPE_CLOB];
+      }
 
       // Parse oracle:// URI to extract user, password, connectString
       const poolOpts: Record<string, unknown> = {
@@ -175,7 +182,19 @@ class OracleDialect extends AbstractSqlDialect {
     }).getConnection();
     try {
       const result = await conn.execute(sql, params);
-      return result.rows ?? [];
+      const rows = result.rows ?? [];
+      // oracledb rows may carry internal driver objects (ConnectDescription etc.)
+      // with circular references — extract only own enumerable properties
+      return rows.map(row => {
+        if (row && typeof row === 'object' && !Array.isArray(row)) {
+          const clean: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+            clean[k] = v;
+          }
+          return clean as T;
+        }
+        return row;
+      });
     } finally {
       await conn.close();
     }
@@ -280,9 +299,11 @@ class OracleDialect extends AbstractSqlDialect {
   }
 
   // Oracle uppercase column mapping: normalize row keys to schema field names
+  // IMPORTANT: only copy known fields — Oracle oracledb may attach internal
+  // objects (ConnectDescription, etc.) with circular references to result rows
   protected deserializeRow(row: Record<string, unknown>, schema: import('../core/types.js').EntitySchema): Record<string, unknown> {
     if (!row) return row;
-    // Oracle returns UPPERCASE keys — normalize before calling parent deserialize
+    // Build map: UPPERCASE key → schema field name
     const upperToField: Record<string, string> = { ID: 'id', CREATEDAT: 'createdAt', UPDATEDAT: 'updatedAt' };
     for (const fieldName of Object.keys(schema.fields)) {
       upperToField[fieldName.toUpperCase()] = fieldName;
@@ -292,8 +313,11 @@ class OracleDialect extends AbstractSqlDialect {
     }
     const normalized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(row)) {
-      const mapped = upperToField[key] ?? upperToField[key.toUpperCase()] ?? key;
-      normalized[mapped] = value;
+      const mapped = upperToField[key] ?? upperToField[key.toUpperCase()];
+      // Skip unknown keys — avoids circular Oracle driver internals
+      if (mapped) {
+        normalized[mapped] = value;
+      }
     }
     return super.deserializeRow(normalized, schema);
   }

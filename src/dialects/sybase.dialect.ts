@@ -19,6 +19,7 @@ import { MSSQLDialect } from './mssql.dialect.js';
 
 const SYBASE_TYPE_MAP: Record<string, string> = {
   string:  'NVARCHAR(MAX)',
+  text:    'TEXT',
   number:  'FLOAT',
   boolean: 'TINYINT',
   date:    'DATETIME',

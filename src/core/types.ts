@@ -9,6 +9,7 @@
 
 export type FieldType =
   | 'string'
+  | 'text'
   | 'number'
   | 'boolean'
   | 'date'

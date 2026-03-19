@@ -46,6 +46,7 @@ function logQuery(operation: string, table: string, details?: unknown): void {
 function fieldToSqlType(field: FieldDef): string {
   switch (field.type) {
     case 'string':  return 'TEXT';
+    case 'text':    return 'TEXT';
     case 'number':  return 'REAL';
     case 'boolean': return 'INTEGER';
     case 'date':    return 'TEXT';
@@ -139,6 +140,8 @@ function deserializeField(val: unknown, field: FieldDef): unknown {
     case 'array':
       return parseJsonSafe(val as string, []);
     case 'number':
+      return val;
+    case 'text':
       return val;
     default:
       return val;

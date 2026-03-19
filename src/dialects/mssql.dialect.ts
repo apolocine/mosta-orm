@@ -18,6 +18,7 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 
 const MSSQL_TYPE_MAP: Record<string, string> = {
   string:  'NVARCHAR(MAX)',
+  text:    'NVARCHAR(MAX)',
   number:  'FLOAT',
   boolean: 'BIT',
   date:    'DATETIME2',

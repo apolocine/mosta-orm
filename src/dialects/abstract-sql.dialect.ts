@@ -332,6 +332,8 @@ export abstract class AbstractSqlDialect implements IDialect {
         return parseJsonSafe(val as string, []);
       case 'number':
         return val;
+      case 'text':
+        return val;
       default:
         return val;
     }
