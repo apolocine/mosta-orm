@@ -17,6 +17,7 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 
 const PG_TYPE_MAP: Record<string, string> = {
   string:  'TEXT',
+  text:    'TEXT',
   number:  'DOUBLE PRECISION',
   boolean: 'BOOLEAN',
   date:    'TIMESTAMPTZ',

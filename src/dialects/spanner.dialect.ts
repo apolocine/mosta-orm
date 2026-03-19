@@ -18,6 +18,7 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 
 const SPANNER_TYPE_MAP: Record<string, string> = {
   string:  'STRING(MAX)',
+  text:    'STRING(MAX)',
   number:  'FLOAT64',
   boolean: 'BOOL',
   date:    'TIMESTAMP',

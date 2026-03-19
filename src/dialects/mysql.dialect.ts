@@ -17,6 +17,7 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 
 const MYSQL_TYPE_MAP: Record<string, string> = {
   string:  'VARCHAR(255)',
+  text:    'LONGTEXT',
   number:  'DOUBLE',
   boolean: 'TINYINT(1)',
   date:    'DATETIME',

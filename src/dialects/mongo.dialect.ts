@@ -54,6 +54,7 @@ function buildMongooseSchema(entity: EntitySchema): Schema {
     // Type mapping
     switch (field.type) {
       case 'string':  schemaDef.type = String; break;
+      case 'text':    schemaDef.type = String; break;
       case 'number':  schemaDef.type = Number; break;
       case 'boolean': schemaDef.type = Boolean; break;
       case 'date':    schemaDef.type = Date; break;

@@ -19,6 +19,7 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 
 const DB2_TYPE_MAP: Record<string, string> = {
   string:  'VARCHAR(4000)',
+  text:    'CLOB',
   number:  'DOUBLE',
   boolean: 'BOOLEAN',
   date:    'TIMESTAMP',

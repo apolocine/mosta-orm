@@ -18,6 +18,7 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 
 const HSQL_TYPE_MAP: Record<string, string> = {
   string:  'VARCHAR(4000)',
+  text:    'LONGVARCHAR',
   number:  'DOUBLE',
   boolean: 'BOOLEAN',
   date:    'TIMESTAMP',
