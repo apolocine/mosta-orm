@@ -102,6 +102,20 @@ export type { JdbcDriverInfo } from './bridge/jdbc-registry.js';
 export type { JdbcBridgeConfig } from './bridge/JdbcNormalizer.js';
 
 // ============================================================
+// Entity Service (facade CRUD + EventEmitter for @mostajs/net)
+// ============================================================
+export { EntityService } from './core/entity-service.js';
+
+// ============================================================
+// OrmRequest / OrmResponse (canonical format for @mostajs/net)
+// ============================================================
+export type {
+  OrmRequest,
+  OrmResponse,
+  OrmOperation,
+} from './core/orm-request.js';
+
+// ============================================================
 // Errors
 // ============================================================
 export {
