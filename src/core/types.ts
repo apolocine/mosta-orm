@@ -70,6 +70,16 @@ export interface EntitySchema {
   indexes: IndexDef[];
   /** Auto-manage createdAt/updatedAt */
   timestamps: boolean;
+
+  // --- Discriminator (single-table inheritance, Drupal-style node._type) ---
+  /** Discriminator field name (e.g. '_type'). If set, enables single-table mode. */
+  discriminator?: string;
+  /** Discriminator value for this entity (e.g. 'article'). Used to filter rows in a shared table. */
+  discriminatorValue?: string;
+
+  // --- Soft delete ---
+  /** Enable soft delete (adds deletedAt field, auto-filters on find) */
+  softDelete?: boolean;
 }
 
 // ============================================================
@@ -193,6 +203,7 @@ export type SchemaStrategy = 'validate' | 'update' | 'create' | 'create-drop' | 
  *   hibernate.dialect                → dialect
  *   hibernate.show_sql               → showSql
  *   hibernate.format_sql             → formatSql
+ *   hibernate.highlight_sql          → highlightSql
  *   hibernate.hbm2ddl.auto           → schemaStrategy
  *   hibernate.connection.pool_size   → poolSize
  *   hibernate.cache.use_second_level → cacheEnabled
@@ -202,11 +213,13 @@ export interface ConnectionConfig {
   dialect: DialectType;
   uri: string;
 
-  // --- Logging (hibernate.show_sql / hibernate.format_sql) ---
+  // --- Logging (hibernate.show_sql / hibernate.format_sql / hibernate.highlight_sql) ---
   /** Log generated queries to console (default: false) */
   showSql?: boolean;
   /** Pretty-print logged queries (default: false) */
   formatSql?: boolean;
+  /** Colorize SQL keywords in terminal output (default: false) */
+  highlightSql?: boolean;
 
   // --- Schema management (hibernate.hbm2ddl.auto) ---
   /** Schema generation strategy (default: 'none') */

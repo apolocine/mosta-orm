@@ -593,7 +593,159 @@ mosta-orm/
 
 ## License
 
-MIT — © 2025 Dr Hamid MADANI <drmdh@msn.com>
+## Hibernate Properties (.env.local)
+
+MostaORM uses environment variables inspired by Hibernate `persistence.xml` properties :
+
+```bash
+# Database connection
+DB_DIALECT=postgres          # mongodb | sqlite | postgres | mysql | mariadb | oracle | mssql | cockroachdb | db2 | hana | hsqldb | spanner | sybase
+SGBD_URI=postgresql://user:pass@localhost:5432/mydb
+
+# Logging (hibernate.show_sql / hibernate.format_sql / hibernate.highlight_sql)
+DB_SHOW_SQL=true             # Log all SQL/queries to console
+DB_FORMAT_SQL=true           # Pretty-print queries with indentation
+DB_HIGHLIGHT_SQL=true        # Colorize SQL keywords (ANSI terminal colors)
+
+# Schema management (hibernate.hbm2ddl.auto)
+DB_SCHEMA_STRATEGY=update    # validate | update | create | create-drop | none
+
+# Connection pool (hibernate.connection.pool_size)
+DB_POOL_SIZE=20              # Max connections in pool (default: 10)
+
+# Cache
+DB_CACHE_ENABLED=true        # Enable query result caching
+DB_CACHE_TTL=60              # Cache TTL in seconds
+
+# Performance
+DB_BATCH_SIZE=25             # Default batch size for bulk operations
+```
+
+Or programmatically :
+
+```typescript
+const dialect = await getDialect({
+  dialect: 'oracle',
+  uri: 'oracle://user:pass@localhost:1521/XEPDB1',
+  showSql: true,
+  formatSql: true,
+  highlightSql: true,       // SQL keywords in yellow, tables in green, params in magenta
+  schemaStrategy: 'update',
+  poolSize: 20,
+})
+```
+
+---
+
+## Discriminator (Single-Table Inheritance)
+
+Inspired by Drupal's `node.type` and Hibernate's `@DiscriminatorColumn`, MostaORM supports storing multiple entity types in a single table/collection using a discriminator field.
+
+```typescript
+// Two entity types sharing ONE table "entities"
+const ArticleSchema: EntitySchema = {
+  name: 'Article',
+  collection: 'entities',          // shared table
+  discriminator: '_type',           // discriminator column
+  discriminatorValue: 'article',    // value for this type
+  fields: { title: { type: 'string' }, body: { type: 'text' } },
+  // ...
+}
+
+const PageSchema: EntitySchema = {
+  name: 'Page',
+  collection: 'entities',          // same table
+  discriminator: '_type',
+  discriminatorValue: 'page',
+  fields: { title: { type: 'string' }, slug: { type: 'string' } },
+  // ...
+}
+```
+
+All CRUD operations automatically filter by `_type` :
+
+```typescript
+const articleRepo = new BaseRepository(ArticleSchema, dialect)
+const pageRepo = new BaseRepository(PageSchema, dialect)
+
+await articleRepo.findAll()        // SELECT * FROM entities WHERE _type = 'article'
+await pageRepo.findAll()           // SELECT * FROM entities WHERE _type = 'page'
+await articleRepo.findById(pageId) // Returns null — cross-type isolation
+await articleRepo.count()          // Only counts articles
+```
+
+Supported on all 13 dialects. In MongoDB, the discriminator field is added to the Mongoose schema and included in all filters.
+
+---
+
+## Soft Delete
+
+Enable soft delete on any entity — deleted records are hidden from queries but not physically removed :
+
+```typescript
+const CommentSchema: EntitySchema = {
+  name: 'Comment',
+  collection: 'comments',
+  softDelete: true,                 // adds deletedAt column
+  fields: { text: { type: 'string' } },
+  // ...
+}
+
+const repo = new BaseRepository(CommentSchema, dialect)
+await repo.delete(id)              // UPDATE comments SET deletedAt = NOW() WHERE id = ?
+await repo.findAll()               // Automatically filters: WHERE deletedAt IS NULL
+await repo.count()                 // Only counts non-deleted
+await repo.findById(deletedId)     // Returns null
+
+// Query deleted records explicitly
+await repo.findAll({ deletedAt: { $ne: null } })
+```
+
+Discriminator + soft delete can be combined on the same schema.
+
+---
+
+## EntityService (Facade for @mostajs/net)
+
+`EntityService` provides a CRUD facade with EventEmitter for real-time transports :
+
+```typescript
+import { EntityService } from '@mostajs/orm'
+
+const service = new EntityService(dialect, schemas)
+
+// CRUD via canonical OrmRequest/OrmResponse
+const response = await service.execute({
+  op: 'findAll',
+  entity: 'User',
+  filter: { status: 'active' },
+})
+
+// Events for real-time (SSE, WebSocket)
+service.on('entity.created', ({ entity, data }) => { /* broadcast */ })
+service.on('entity.updated', ({ entity, data }) => { /* broadcast */ })
+service.on('entity.deleted', ({ entity, id }) => { /* broadcast */ })
+```
+
+---
+
+## Schema Diff & Migration
+
+```typescript
+import { diffSchemas, generateMigrationSQL } from '@mostajs/orm'
+
+const ops = diffSchemas(oldSchemas, newSchemas)
+// [{ type: 'addField', entity: 'User', field: 'phone', def: { type: 'string' } }]
+
+const sql = generateMigrationSQL(ops, 'postgres')
+// ["ALTER TABLE users ADD COLUMN phone TEXT"]
+```
+
+---
+
+## License
+
+MIT — © 2025-2026 Dr Hamid MADANI <drmdh@msn.com>
 
 ## Contributing
 

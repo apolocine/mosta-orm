@@ -286,7 +286,8 @@ class OracleDialect extends AbstractSqlDialect {
   // Override count to handle CNT vs cnt
   async count(schema: import('../core/types.js').EntitySchema, filter: import('../core/types.js').FilterQuery): Promise<number> {
     this.resetParams();
-    const where = this.translateFilter(filter, schema);
+    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+    const where = this.translateFilter(effectiveFilter, schema);
     const table = this.quoteIdentifier(schema.collection);
     const sql = `SELECT COUNT(*) as cnt FROM ${table} WHERE ${where.sql}`;
     this.log('COUNT', schema.collection, { sql, params: where.params });
