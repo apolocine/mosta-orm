@@ -116,6 +116,12 @@ export type {
 } from './core/orm-request.js';
 
 // ============================================================
+// Schema Diff & Migrations
+// ============================================================
+export { diffSchemas, generateMigrationSQL } from './core/schema-diff.js';
+export type { DiffOperation } from './core/schema-diff.js';
+
+// ============================================================
 // Errors
 // ============================================================
 export {

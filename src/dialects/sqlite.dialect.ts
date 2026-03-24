@@ -25,13 +25,35 @@ import type {
 
 let showSql = false;
 let formatSql = false;
+let highlightEnabled = false;
+
+const C = {
+  reset: '\x1b[0m', dim: '\x1b[2m', cyan: '\x1b[36m',
+  yellow: '\x1b[33m', green: '\x1b[32m', magenta: '\x1b[35m',
+  blue: '\x1b[34m', gray: '\x1b[90m',
+};
+
+const SQL_KW = /\b(SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|IF|NOT|EXISTS|INDEX|DROP|PRIMARY|KEY|UNIQUE|NULL|AND|OR|AS|COUNT|DISTINCT|GROUP|BY|ORDER|ASC|DESC|LIMIT|OFFSET|LIKE|IN|IS|DEFAULT)\b/gi;
 
 function logQuery(operation: string, table: string, details?: unknown): void {
   if (!showSql) return;
-  const prefix = `[DAL:SQLite] ${operation} ${table}`;
+  const prefix = highlightEnabled
+    ? `${C.dim}[DAL:${C.cyan}SQLite${C.dim}]${C.reset} ${C.blue}${operation}${C.reset} ${C.green}${table}${C.reset}`
+    : `[DAL:SQLite] ${operation} ${table}`;
   if (formatSql && details) {
-    console.log(prefix);
-    console.log(JSON.stringify(details, null, 2));
+    const d = details as Record<string, unknown>;
+    const sql = d.sql as string | undefined;
+    if (sql && highlightEnabled) {
+      console.log(prefix);
+      console.log(`  ${sql.replace(SQL_KW, kw => `${C.yellow}${kw.toUpperCase()}${C.reset}`)}`);
+      const params = (d.params ?? d.values) as unknown[] | undefined;
+      if (params?.length) {
+        console.log(`  ${C.gray}params: [${params.map((p, i) => `${C.magenta}${JSON.stringify(p)}${C.gray}`).join(', ')}]${C.reset}`);
+      }
+    } else {
+      console.log(prefix);
+      console.log(JSON.stringify(details, null, 2));
+    }
   } else if (details) {
     console.log(`${prefix} ${JSON.stringify(details)}`);
   } else {
@@ -397,6 +419,16 @@ function prepareInsertData(
     }
   }
 
+  // Extra columns not in schema.fields or relations (e.g. discriminator _type)
+  const relationKeys = new Set(Object.keys(schema.relations));
+  for (const key of Object.keys(data)) {
+    if (!columns.includes(key) && key !== 'id' && !relationKeys.has(key)) {
+      columns.push(key);
+      placeholders.push('?');
+      values.push(data[key] as unknown);
+    }
+  }
+
   return { columns, placeholders, values };
 }
 
@@ -484,6 +516,16 @@ function generateCreateTable(schema: EntitySchema): string {
     cols.push('  "updatedAt" TEXT');
   }
 
+  // Discriminator column (single-table inheritance)
+  if (schema.discriminator) {
+    cols.push(`  ${quoteCol(schema.discriminator)} TEXT NOT NULL`);
+  }
+
+  // Soft-delete column
+  if (schema.softDelete) {
+    cols.push('  "deletedAt" TEXT');
+  }
+
   return `CREATE TABLE IF NOT EXISTS "${schema.collection}" (\n${cols.join(',\n')}\n)`;
 }
 
@@ -509,6 +551,29 @@ function generateIndexes(schema: EntitySchema): string[] {
 }
 
 // ============================================================
+// Discriminator + soft-delete helpers
+// ============================================================
+
+function applyDiscriminator(filter: DALFilter, schema: EntitySchema): DALFilter {
+  if (!schema.discriminator || !schema.discriminatorValue) return filter;
+  return { ...filter, [schema.discriminator]: schema.discriminatorValue };
+}
+
+function applyDiscriminatorToData(data: Record<string, unknown>, schema: EntitySchema): Record<string, unknown> {
+  if (!schema.discriminator || !schema.discriminatorValue) return data;
+  return { ...data, [schema.discriminator]: schema.discriminatorValue };
+}
+
+function applySoftDeleteFilter(filter: DALFilter, schema: EntitySchema): DALFilter {
+  if (!schema.softDelete || 'deletedAt' in filter) return filter;
+  return { ...filter, deletedAt: { $eq: null } };
+}
+
+function applyAllFilters(filter: DALFilter, schema: EntitySchema): DALFilter {
+  return applySoftDeleteFilter(applyDiscriminator(filter, schema), schema);
+}
+
+// ============================================================
 // SQLiteDialect — implements IDialect
 // ============================================================
 
@@ -522,6 +587,7 @@ class SQLiteDialect implements IDialect {
     this.config = config;
     showSql = config.showSql ?? false;
     formatSql = config.formatSql ?? false;
+    highlightEnabled = config.highlightSql ?? false;
 
     // Ensure parent directory exists for file-based DBs
     if (config.uri !== ':memory:') {
@@ -664,7 +730,7 @@ class SQLiteDialect implements IDialect {
 
   async find<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T[]> {
     const db = this.getDb();
-    const where = translateFilter(filter, schema);
+    const where = translateFilter(applyAllFilters(filter, schema), schema);
     const cols = buildSelectColumns(schema, options);
     const orderBy = buildOrderBy(options);
     const limitOffset = buildLimitOffset(options);
@@ -678,7 +744,7 @@ class SQLiteDialect implements IDialect {
 
   async findOne<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T | null> {
     const db = this.getDb();
-    const where = translateFilter(filter, schema);
+    const where = translateFilter(applyAllFilters(filter, schema), schema);
     const cols = buildSelectColumns(schema, options);
     const orderBy = buildOrderBy(options);
 
@@ -692,17 +758,18 @@ class SQLiteDialect implements IDialect {
   async findById<T>(schema: EntitySchema, id: string, options?: QueryOptions): Promise<T | null> {
     const db = this.getDb();
     const cols = buildSelectColumns(schema, options);
+    const where = translateFilter(applyAllFilters({ id }, schema), schema);
 
-    const sql = `SELECT ${cols} FROM "${schema.collection}" WHERE "id" = ?`;
+    const sql = `SELECT ${cols} FROM "${schema.collection}" WHERE ${where.sql}`;
     logQuery('FIND_BY_ID', schema.collection, { id });
 
-    const row = db.prepare(sql).get(id) as Record<string, unknown> | undefined;
+    const row = db.prepare(sql).get(...where.params) as Record<string, unknown> | undefined;
     return row ? deserializeRow(row, schema) as T : null;
   }
 
   async create<T>(schema: EntitySchema, data: Record<string, unknown>): Promise<T> {
     const db = this.getDb();
-    const { columns, placeholders, values } = prepareInsertData(schema, data);
+    const { columns, placeholders, values } = prepareInsertData(schema, applyDiscriminatorToData(data, schema));
 
     const sql = `INSERT INTO "${schema.collection}" (${columns.map(quoteCol).join(', ')}) VALUES (${placeholders.join(', ')})`;
     logQuery('CREATE', schema.collection, { sql, values });
@@ -738,8 +805,9 @@ class SQLiteDialect implements IDialect {
     const { setClauses, values } = prepareUpdateData(schema, data);
 
     if (setClauses.length > 0) {
-      const sql = `UPDATE "${schema.collection}" SET ${setClauses.join(', ')} WHERE "id" = ?`;
-      values.push(id);
+      const idWhere = translateFilter(applyDiscriminator({ id }, schema), schema);
+      const sql = `UPDATE "${schema.collection}" SET ${setClauses.join(', ')} WHERE ${idWhere.sql}`;
+      values.push(...idWhere.params);
       logQuery('UPDATE', schema.collection, { sql, values });
       db.prepare(sql).run(...values);
     }
@@ -768,7 +836,7 @@ class SQLiteDialect implements IDialect {
 
   async updateMany(schema: EntitySchema, filter: DALFilter, data: Record<string, unknown>): Promise<number> {
     const db = this.getDb();
-    const where = translateFilter(filter, schema);
+    const where = translateFilter(applyAllFilters(filter, schema), schema);
     const { setClauses, values } = prepareUpdateData(schema, data);
 
     if (setClauses.length === 0) return 0;
@@ -783,20 +851,36 @@ class SQLiteDialect implements IDialect {
 
   async delete(schema: EntitySchema, id: string): Promise<boolean> {
     const db = this.getDb();
-    const sql = `DELETE FROM "${schema.collection}" WHERE "id" = ?`;
-    logQuery('DELETE', schema.collection, { id });
+    const idWhere = translateFilter(applyDiscriminator({ id }, schema), schema);
 
-    const result = db.prepare(sql).run(id);
+    if (schema.softDelete) {
+      const sql = `UPDATE "${schema.collection}" SET "deletedAt" = ? WHERE ${idWhere.sql}`;
+      logQuery('SOFT_DELETE', schema.collection, { id });
+      const result = db.prepare(sql).run(new Date().toISOString(), ...idWhere.params);
+      return result.changes > 0;
+    }
+
+    const sql = `DELETE FROM "${schema.collection}" WHERE ${idWhere.sql}`;
+    logQuery('DELETE', schema.collection, { id });
+    const result = db.prepare(sql).run(...idWhere.params);
     return result.changes > 0;
   }
 
   async deleteMany(schema: EntitySchema, filter: DALFilter): Promise<number> {
     const db = this.getDb();
-    const where = translateFilter(filter, schema);
+    const effectiveFilter = applyDiscriminator(filter, schema);
 
+    if (schema.softDelete) {
+      const where = translateFilter(applySoftDeleteFilter(effectiveFilter, schema), schema);
+      const sql = `UPDATE "${schema.collection}" SET "deletedAt" = ? WHERE ${where.sql}`;
+      logQuery('SOFT_DELETE_MANY', schema.collection, { sql });
+      const result = db.prepare(sql).run(new Date().toISOString(), ...where.params);
+      return result.changes;
+    }
+
+    const where = translateFilter(effectiveFilter, schema);
     const sql = `DELETE FROM "${schema.collection}" WHERE ${where.sql}`;
     logQuery('DELETE_MANY', schema.collection, { sql, params: where.params });
-
     const result = db.prepare(sql).run(...where.params);
     return result.changes;
   }
@@ -805,7 +889,7 @@ class SQLiteDialect implements IDialect {
 
   async count(schema: EntitySchema, filter: DALFilter): Promise<number> {
     const db = this.getDb();
-    const where = translateFilter(filter, schema);
+    const where = translateFilter(applyAllFilters(filter, schema), schema);
 
     const sql = `SELECT COUNT(*) as cnt FROM "${schema.collection}" WHERE ${where.sql}`;
     logQuery('COUNT', schema.collection, { sql, params: where.params });
@@ -816,7 +900,7 @@ class SQLiteDialect implements IDialect {
 
   async distinct(schema: EntitySchema, field: string, filter: DALFilter): Promise<unknown[]> {
     const db = this.getDb();
-    const where = translateFilter(filter, schema);
+    const where = translateFilter(applyAllFilters(filter, schema), schema);
 
     const sql = `SELECT DISTINCT ${quoteCol(field)} FROM "${schema.collection}" WHERE ${where.sql}`;
     logQuery('DISTINCT', schema.collection, { sql, params: where.params });
@@ -844,7 +928,8 @@ class SQLiteDialect implements IDialect {
 
     for (const stage of stages) {
       if ('$match' in stage) {
-        const w = translateFilter(stage.$match, schema);
+        const effectiveMatch = applyAllFilters(stage.$match, schema);
+        const w = translateFilter(effectiveMatch, schema);
         whereClause = w.sql;
         whereParams = w.params;
       } else if ('$group' in stage) {
@@ -1147,13 +1232,19 @@ class SQLiteDialect implements IDialect {
     // Build OR conditions with LIKE for each field (case-insensitive)
     const conditions = fields.map(f => `${quoteCol(f)} LIKE ?`);
     const pattern = `%${query}%`;
-    const params = fields.map(() => pattern);
+    const params: unknown[] = fields.map(() => pattern);
 
     const cols = buildSelectColumns(schema, options);
     const orderBy = buildOrderBy(options);
     const limitOffset = buildLimitOffset(options);
 
-    const sql = `SELECT ${cols} FROM "${schema.collection}" WHERE (${conditions.join(' OR ')})${orderBy}${limitOffset}`;
+    // Apply discriminator + soft-delete
+    const extraFilter = applyAllFilters({}, schema);
+    const extra = translateFilter(extraFilter, schema);
+    const extraWhere = extra.sql !== '1=1' ? ` AND ${extra.sql}` : '';
+    params.push(...extra.params);
+
+    const sql = `SELECT ${cols} FROM "${schema.collection}" WHERE (${conditions.join(' OR ')})${extraWhere}${orderBy}${limitOffset}`;
     logQuery('SEARCH', schema.collection, { sql, query, fields });
 
     const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];

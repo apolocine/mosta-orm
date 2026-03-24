@@ -71,6 +71,7 @@ export function getConfigFromEnv(): ConnectionConfig {
     // Hibernate-inspired properties from env
     showSql:        process.env.DB_SHOW_SQL === 'true',
     formatSql:      process.env.DB_FORMAT_SQL === 'true',
+    highlightSql:   process.env.DB_HIGHLIGHT_SQL === 'true',
     schemaStrategy: (process.env.DB_SCHEMA_STRATEGY as ConnectionConfig['schemaStrategy']) || 'none',
     poolSize:       process.env.DB_POOL_SIZE ? Number(process.env.DB_POOL_SIZE) : undefined,
     cacheEnabled:   process.env.DB_CACHE_ENABLED === 'true',

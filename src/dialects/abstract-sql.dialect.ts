@@ -25,14 +25,58 @@ import { BridgeManager, type BridgeInstance } from '../bridge/BridgeManager.js';
 // SQL Logging — inspired by hibernate.show_sql / hibernate.format_sql
 // ============================================================
 
-function logQuery(dialect: string, showSql: boolean, formatSql: boolean, operation: string, table: string, details?: unknown): void {
+// ANSI colors for highlight_sql
+const C = {
+  reset:   '\x1b[0m',
+  dim:     '\x1b[2m',
+  cyan:    '\x1b[36m',   // dialect label
+  yellow:  '\x1b[33m',   // SQL keywords
+  green:   '\x1b[32m',   // table/column names
+  magenta: '\x1b[35m',   // values/params
+  blue:    '\x1b[34m',   // operation
+  gray:    '\x1b[90m',   // secondary info
+};
+
+const SQL_KEYWORDS = /\b(SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|IF|NOT|EXISTS|INDEX|DROP|ALTER|ADD|COLUMN|PRIMARY|KEY|UNIQUE|NULL|AND|OR|AS|COUNT|DISTINCT|GROUP|BY|ORDER|ASC|DESC|LIMIT|OFFSET|JOIN|ON|IN|LIKE|BETWEEN|IS|CASCADE|PURGE|DEFAULT|VARCHAR|TEXT|INTEGER|TIMESTAMP|TIMESTAMPTZ|BOOLEAN|HAVING|LEFT|RIGHT|INNER|OUTER)\b/gi;
+
+function highlightSql(sql: string): string {
+  return sql.replace(SQL_KEYWORDS, (kw) => `${C.yellow}${kw.toUpperCase()}${C.reset}`);
+}
+
+function logQuery(dialect: string, showSql: boolean, formatSql: boolean, operation: string, table: string, details?: unknown, highlightEnabled = false): void {
   if (!showSql) return;
-  const prefix = `[DAL:${dialect}] ${operation} ${table}`;
+
+  const prefix = highlightEnabled
+    ? `${C.dim}[DAL:${C.cyan}${dialect}${C.dim}]${C.reset} ${C.blue}${operation}${C.reset} ${C.green}${table}${C.reset}`
+    : `[DAL:${dialect}] ${operation} ${table}`;
+
   if (formatSql && details) {
-    console.log(prefix);
-    console.log(JSON.stringify(details, null, 2));
+    const d = details as Record<string, unknown>;
+    const sql = d.sql as string | undefined;
+    const params = d.params ?? d.values;
+
+    if (sql) {
+      const formatted = highlightEnabled ? highlightSql(sql) : sql;
+      console.log(prefix);
+      console.log(`  ${formatted}`);
+      if (params && Array.isArray(params) && params.length > 0) {
+        const paramStr = highlightEnabled
+          ? params.map((p, i) => `${C.gray}$${i + 1}=${C.magenta}${JSON.stringify(p)}${C.reset}`).join(', ')
+          : params.map((p, i) => `$${i + 1}=${JSON.stringify(p)}`).join(', ');
+        console.log(`  ${C.gray ?? ''}params: [${paramStr}${C.gray ?? ''}]${C.reset ?? ''}`);
+      }
+    } else {
+      console.log(prefix);
+      console.log(JSON.stringify(details, null, 2));
+    }
   } else if (details) {
-    console.log(`${prefix} ${JSON.stringify(details)}`);
+    const d = details as Record<string, unknown>;
+    const sql = d.sql as string | undefined;
+    if (sql && highlightEnabled) {
+      console.log(`${prefix} ${highlightSql(sql)}`);
+    } else {
+      console.log(`${prefix} ${JSON.stringify(details)}`);
+    }
   } else {
     console.log(prefix);
   }
@@ -136,6 +180,7 @@ export abstract class AbstractSqlDialect implements IDialect {
   protected schemas: EntitySchema[] = [];
   protected showSql = false;
   protected formatSql = false;
+  protected highlightEnabled = false;
   private paramCounter = 0;
 
   // --- JDBC Bridge state (transparent interception) ---
@@ -236,7 +281,7 @@ export abstract class AbstractSqlDialect implements IDialect {
   // --- Logging helper ---
 
   protected log(operation: string, table: string, details?: unknown): void {
-    logQuery(this.getDialectLabel(), this.showSql, this.formatSql, operation, table, details);
+    logQuery(this.getDialectLabel(), this.showSql, this.formatSql, operation, table, details, this.highlightEnabled);
   }
 
   // --- Placeholder counter management ---
@@ -337,6 +382,49 @@ export abstract class AbstractSqlDialect implements IDialect {
       default:
         return val;
     }
+  }
+
+  // ============================================================
+  // Discriminator support (single-table inheritance)
+  // ============================================================
+
+  /**
+   * Inject discriminator filter into any query.
+   * If the schema has discriminator + discriminatorValue, adds: AND _type = 'article'
+   */
+  protected applyDiscriminator(filter: DALFilter, schema: EntitySchema): DALFilter {
+    if (!schema.discriminator || !schema.discriminatorValue) return filter;
+    return { ...filter, [schema.discriminator]: schema.discriminatorValue };
+  }
+
+  /**
+   * Inject discriminator field into INSERT data.
+   * If the schema has discriminator + discriminatorValue, adds _type: 'article' to the row.
+   */
+  protected applyDiscriminatorToData(data: Record<string, unknown>, schema: EntitySchema): Record<string, unknown> {
+    if (!schema.discriminator || !schema.discriminatorValue) return data;
+    return { ...data, [schema.discriminator]: schema.discriminatorValue };
+  }
+
+  /**
+   * Add discriminator column to CREATE TABLE DDL if schema uses single-table inheritance.
+   */
+  protected getDiscriminatorColumnDDL(schema: EntitySchema): string | null {
+    if (!schema.discriminator) return null;
+    return `${this.quoteIdentifier(schema.discriminator)} VARCHAR(100) NOT NULL`;
+  }
+
+  // ============================================================
+  // Soft-delete support
+  // ============================================================
+
+  /**
+   * Inject soft-delete filter: WHERE deletedAt IS NULL
+   * Automatically applied to find/count/distinct/search queries.
+   */
+  protected applySoftDeleteFilter(filter: DALFilter, schema: EntitySchema): DALFilter {
+    if (!schema.softDelete || 'deletedAt' in filter) return filter;
+    return { ...filter, deletedAt: { $eq: null } };
   }
 
   // ============================================================
@@ -468,6 +556,12 @@ export abstract class AbstractSqlDialect implements IDialect {
     if (schema.timestamps) {
       cols.push('createdAt', 'updatedAt');
     }
+    if (schema.discriminator) {
+      cols.push(schema.discriminator);
+    }
+    if (schema.softDelete) {
+      cols.push('deletedAt');
+    }
     return cols;
   }
 
@@ -533,6 +627,16 @@ export abstract class AbstractSqlDialect implements IDialect {
         columns.push('updatedAt');
         placeholders.push(this.nextPlaceholder());
         values.push(now);
+      }
+    }
+
+    // Extra columns not in schema.fields or relations (e.g. discriminator _type)
+    const relationKeys = new Set(Object.keys(schema.relations));
+    for (const key of Object.keys(data)) {
+      if (!columns.includes(key) && key !== 'id' && !relationKeys.has(key)) {
+        columns.push(key);
+        placeholders.push(this.nextPlaceholder());
+        values.push(data[key] as unknown);
       }
     }
 
@@ -616,6 +720,17 @@ export abstract class AbstractSqlDialect implements IDialect {
       cols.push(`  ${q('updatedAt')} ${this.fieldToSqlType({ type: 'date' })}`);
     }
 
+    // Discriminator column (single-table inheritance)
+    const discDdl = this.getDiscriminatorColumnDDL(schema);
+    if (discDdl) {
+      cols.push(`  ${discDdl}`);
+    }
+
+    // Soft-delete column
+    if (schema.softDelete) {
+      cols.push(`  ${q('deletedAt')} ${this.fieldToSqlType({ type: 'date' })}`);
+    }
+
     return `${this.getCreateTablePrefix(schema.collection)} (\n${cols.join(',\n')}\n)`;
   }
 
@@ -647,6 +762,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     this.config = config;
     this.showSql = config.showSql ?? false;
     this.formatSql = config.formatSql ?? false;
+    this.highlightEnabled = config.highlightSql ?? false;
 
     // --- JDBC Bridge interception via BridgeManager ---
     // If a JDBC JAR is available for this dialect, use the bridge
@@ -801,7 +917,8 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   async find<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T[]> {
     this.resetParams();
-    const where = this.translateFilter(filter, schema);
+    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+    const where = this.translateFilter(effectiveFilter, schema);
     const cols = this.buildSelectColumns(schema, options);
     const orderBy = this.buildOrderBy(options);
     const limitOffset = this.buildLimitOffset(options);
@@ -823,18 +940,22 @@ export abstract class AbstractSqlDialect implements IDialect {
     this.resetParams();
     const cols = this.buildSelectColumns(schema, options);
     const table = this.quoteIdentifier(schema.collection);
-    const ph = this.nextPlaceholder();
 
-    const sql = `SELECT ${cols} FROM ${table} WHERE ${this.quoteIdentifier('id')} = ${ph}`;
+    // Build WHERE with discriminator + soft-delete
+    const extraFilter = this.applySoftDeleteFilter(this.applyDiscriminator({ id }, schema), schema);
+    const where = this.translateFilter(extraFilter, schema);
+
+    const sql = `SELECT ${cols} FROM ${table} WHERE ${where.sql}`;
     this.log('FIND_BY_ID', schema.collection, { id });
 
-    const rows = await this.executeQuery<Record<string, unknown>>(sql, [id]);
+    const rows = await this.executeQuery<Record<string, unknown>>(sql, where.params);
     return rows.length > 0 ? this.deserializeRow(rows[0], schema) as T : null;
   }
 
   async create<T>(schema: EntitySchema, data: Record<string, unknown>): Promise<T> {
     this.resetParams();
-    const { columns, placeholders, values } = this.prepareInsertData(schema, data);
+    const insertData = this.applyDiscriminatorToData(data, schema);
+    const { columns, placeholders, values } = this.prepareInsertData(schema, insertData);
     const table = this.quoteIdentifier(schema.collection);
     const colsSql = columns.map(c => this.quoteIdentifier(c)).join(', ');
 
@@ -873,9 +994,10 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     if (setClauses.length > 0) {
       const table = this.quoteIdentifier(schema.collection);
-      const ph = this.nextPlaceholder();
-      const sql = `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${this.quoteIdentifier('id')} = ${ph}`;
-      values.push(id);
+      const effectiveFilter = this.applyDiscriminator({ id }, schema);
+      const where = this.translateFilter(effectiveFilter, schema);
+      const sql = `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${where.sql}`;
+      values.push(...where.params);
       this.log('UPDATE', schema.collection, { sql, values });
       await this.executeRun(sql, values);
     }
@@ -913,8 +1035,8 @@ export abstract class AbstractSqlDialect implements IDialect {
     const { setClauses, values } = this.prepareUpdateData(schema, data);
     if (setClauses.length === 0) return 0;
 
-    // Need fresh param counter for the WHERE clause
-    const where = this.translateFilter(filter, schema);
+    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+    const where = this.translateFilter(effectiveFilter, schema);
     const table = this.quoteIdentifier(schema.collection);
 
     const sql = `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${where.sql}`;
@@ -926,25 +1048,48 @@ export abstract class AbstractSqlDialect implements IDialect {
   }
 
   async delete(schema: EntitySchema, id: string): Promise<boolean> {
+    // Soft-delete: set deletedAt instead of removing
+    if (schema.softDelete) {
+      this.resetParams();
+      const table = this.quoteIdentifier(schema.collection);
+      const datePh = this.nextPlaceholder();
+      const effectiveFilter = this.applyDiscriminator({ id }, schema);
+      const where = this.translateFilter(effectiveFilter, schema);
+      const sql = `UPDATE ${table} SET ${this.quoteIdentifier('deletedAt')} = ${datePh} WHERE ${where.sql}`;
+      const result = await this.executeRun(sql, [this.serializeDate('now'), ...where.params]);
+      return result.changes > 0;
+    }
+
     this.resetParams();
     const table = this.quoteIdentifier(schema.collection);
-    const ph = this.nextPlaceholder();
+    const effectiveFilter = this.applyDiscriminator({ id }, schema);
+    const where = this.translateFilter(effectiveFilter, schema);
 
-    const sql = `DELETE FROM ${table} WHERE ${this.quoteIdentifier('id')} = ${ph}`;
+    const sql = `DELETE FROM ${table} WHERE ${where.sql}`;
     this.log('DELETE', schema.collection, { id });
 
-    const result = await this.executeRun(sql, [id]);
+    const result = await this.executeRun(sql, where.params);
     return result.changes > 0;
   }
 
   async deleteMany(schema: EntitySchema, filter: DALFilter): Promise<number> {
     this.resetParams();
-    const where = this.translateFilter(filter, schema);
+    const effectiveFilter = this.applyDiscriminator(filter, schema);
     const table = this.quoteIdentifier(schema.collection);
 
+    if (schema.softDelete) {
+      const datePh = this.nextPlaceholder();
+      const softFilter = this.applySoftDeleteFilter(effectiveFilter, schema);
+      const where = this.translateFilter(softFilter, schema);
+      const sql = `UPDATE ${table} SET ${this.quoteIdentifier('deletedAt')} = ${datePh} WHERE ${where.sql}`;
+      this.log('SOFT_DELETE_MANY', schema.collection, { sql });
+      const result = await this.executeRun(sql, [this.serializeDate('now'), ...where.params]);
+      return result.changes;
+    }
+
+    const where = this.translateFilter(effectiveFilter, schema);
     const sql = `DELETE FROM ${table} WHERE ${where.sql}`;
     this.log('DELETE_MANY', schema.collection, { sql, params: where.params });
-
     const result = await this.executeRun(sql, where.params);
     return result.changes;
   }
@@ -955,7 +1100,8 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   async count(schema: EntitySchema, filter: DALFilter): Promise<number> {
     this.resetParams();
-    const where = this.translateFilter(filter, schema);
+    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+    const where = this.translateFilter(effectiveFilter, schema);
     const table = this.quoteIdentifier(schema.collection);
 
     const sql = `SELECT COUNT(*) as cnt FROM ${table} WHERE ${where.sql}`;
@@ -967,7 +1113,8 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   async distinct(schema: EntitySchema, field: string, filter: DALFilter): Promise<unknown[]> {
     this.resetParams();
-    const where = this.translateFilter(filter, schema);
+    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+    const where = this.translateFilter(effectiveFilter, schema);
     const table = this.quoteIdentifier(schema.collection);
 
     const sql = `SELECT DISTINCT ${this.quoteIdentifier(field)} FROM ${table} WHERE ${where.sql}`;
@@ -993,7 +1140,8 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     for (const stage of stages) {
       if ('$match' in stage) {
-        const w = this.translateFilter(stage.$match, schema);
+        const effectiveMatch = this.applySoftDeleteFilter(this.applyDiscriminator(stage.$match, schema), schema);
+        const w = this.translateFilter(effectiveMatch, schema);
         whereClause = w.sql;
         whereParams = w.params;
       } else if ('$group' in stage) {
@@ -1181,8 +1329,10 @@ export abstract class AbstractSqlDialect implements IDialect {
         params.push(this.serializeDate('now'));
       }
 
-      sql += ` WHERE ${this.quoteIdentifier('id')} = ${this.nextPlaceholder()}`;
-      params.push(id);
+      const effectiveFilter = this.applyDiscriminator({ id }, schema);
+      const where = this.translateFilter(effectiveFilter, schema);
+      sql += ` WHERE ${where.sql}`;
+      params.push(...where.params);
 
       this.log('INCREMENT', schema.collection, { id, field, amount });
       await this.executeRun(sql, params);
@@ -1253,8 +1403,10 @@ export abstract class AbstractSqlDialect implements IDialect {
         params.push(this.serializeDate('now'));
       }
 
-      sql += ` WHERE ${this.quoteIdentifier('id')} = ${this.nextPlaceholder()}`;
-      params.push(id);
+      const effectiveFilter = this.applyDiscriminator({ id }, schema);
+      const where = this.translateFilter(effectiveFilter, schema);
+      sql += ` WHERE ${where.sql}`;
+      params.push(...where.params);
 
       this.log('ADD_TO_SET', schema.collection, { id, field, value });
       await this.executeRun(sql, params);
@@ -1311,8 +1463,10 @@ export abstract class AbstractSqlDialect implements IDialect {
         params.push(this.serializeDate('now'));
       }
 
-      sql += ` WHERE ${this.quoteIdentifier('id')} = ${this.nextPlaceholder()}`;
-      params.push(id);
+      const effectiveFilter = this.applyDiscriminator({ id }, schema);
+      const where = this.translateFilter(effectiveFilter, schema);
+      sql += ` WHERE ${where.sql}`;
+      params.push(...where.params);
 
       this.log('PULL', schema.collection, { id, field, value });
       await this.executeRun(sql, params);
@@ -1334,14 +1488,20 @@ export abstract class AbstractSqlDialect implements IDialect {
     this.resetParams();
     const conditions = fields.map(f => `${this.quoteIdentifier(f)} LIKE ${this.nextPlaceholder()}`);
     const pattern = `%${query}%`;
-    const params = fields.map(() => pattern);
+    const params: unknown[] = fields.map(() => pattern);
 
     const cols = this.buildSelectColumns(schema, options);
     const orderBy = this.buildOrderBy(options);
     const limitOffset = this.buildLimitOffset(options);
     const table = this.quoteIdentifier(schema.collection);
 
-    const sql = `SELECT ${cols} FROM ${table} WHERE (${conditions.join(' OR ')})${orderBy}${limitOffset}`;
+    // Apply discriminator + soft-delete
+    const extraFilter = this.applySoftDeleteFilter(this.applyDiscriminator({}, schema), schema);
+    const extra = this.translateFilter(extraFilter, schema);
+    const extraWhere = extra.sql !== '1=1' ? ` AND ${extra.sql}` : '';
+    params.push(...extra.params);
+
+    const sql = `SELECT ${cols} FROM ${table} WHERE (${conditions.join(' OR ')})${extraWhere}${orderBy}${limitOffset}`;
     this.log('SEARCH', schema.collection, { sql, query, fields });
 
     const rows = await this.executeQuery<Record<string, unknown>>(sql, params);
