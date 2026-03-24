@@ -36,6 +36,15 @@ class OracleDialect extends AbstractSqlDialect {
   private pool: unknown = null;
   private oracledb: unknown = null;
 
+  // Mutex to serialize concurrent queries (oracledb thin mode buffer safety)
+  private _mutex: Promise<void> = Promise.resolve();
+  private acquireMutex(): Promise<() => void> {
+    let release: () => void;
+    const prev = this._mutex;
+    this._mutex = new Promise<void>(resolve => { release = resolve; });
+    return prev.then(() => release!);
+  }
+
   // --- Abstract implementations ---
 
   quoteIdentifier(name: string): string {
@@ -174,45 +183,55 @@ class OracleDialect extends AbstractSqlDialect {
 
   async doExecuteQuery<T>(sql: string, params: unknown[]): Promise<T[]> {
     if (!this.pool) throw new Error('Oracle not connected. Call connect() first.');
-    const conn = await (this.pool as {
-      getConnection(): Promise<{
-        execute(sql: string, params: unknown[]): Promise<{ rows: T[] }>;
-        close(): Promise<void>;
-      }>;
-    }).getConnection();
+    const release = await this.acquireMutex();
     try {
-      const result = await conn.execute(sql, params);
-      const rows = result.rows ?? [];
-      // oracledb rows may carry internal driver objects (ConnectDescription etc.)
-      // with circular references — extract only own enumerable properties
-      return rows.map(row => {
-        if (row && typeof row === 'object' && !Array.isArray(row)) {
-          const clean: Record<string, unknown> = {};
-          for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
-            clean[k] = v;
+      const conn = await (this.pool as {
+        getConnection(): Promise<{
+          execute(sql: string, params: unknown[]): Promise<{ rows: T[] }>;
+          close(): Promise<void>;
+        }>;
+      }).getConnection();
+      try {
+        const result = await conn.execute(sql, params);
+        const rows = result.rows ?? [];
+        // oracledb rows may carry internal driver objects (ConnectDescription etc.)
+        // with circular references — extract only own enumerable properties
+        return rows.map(row => {
+          if (row && typeof row === 'object' && !Array.isArray(row)) {
+            const clean: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+              clean[k] = v;
+            }
+            return clean as T;
           }
-          return clean as T;
-        }
-        return row;
-      });
+          return row;
+        });
+      } finally {
+        await conn.close();
+      }
     } finally {
-      await conn.close();
+      release();
     }
   }
 
   async doExecuteRun(sql: string, params: unknown[]): Promise<{ changes: number }> {
     if (!this.pool) throw new Error('Oracle not connected. Call connect() first.');
-    const conn = await (this.pool as {
-      getConnection(): Promise<{
-        execute(sql: string, params: unknown[]): Promise<{ rowsAffected: number }>;
-        close(): Promise<void>;
-      }>;
-    }).getConnection();
+    const release = await this.acquireMutex();
     try {
-      const result = await conn.execute(sql, params);
-      return { changes: result.rowsAffected ?? 0 };
+      const conn = await (this.pool as {
+        getConnection(): Promise<{
+          execute(sql: string, params: unknown[]): Promise<{ rowsAffected: number }>;
+          close(): Promise<void>;
+        }>;
+      }).getConnection();
+      try {
+        const result = await conn.execute(sql, params);
+        return { changes: result.rowsAffected ?? 0 };
+      } finally {
+        await conn.close();
+      }
     } finally {
-      await conn.close();
+      release();
     }
   }
 
