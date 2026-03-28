@@ -200,6 +200,41 @@ export class EntityService extends EventEmitter {
           return { status: 'ok', data };
         }
 
+        case 'updateMany': {
+          if (!req.filter || !req.data) {
+            return { status: 'error', error: { code: 'MISSING_PARAMS', message: 'filter and data are required for updateMany' } };
+          }
+          const count = await repo.updateMany(req.filter, req.data);
+          return { status: 'ok', metadata: { count } };
+        }
+
+        case 'addToSet': {
+          if (!req.id || !req.field) {
+            return { status: 'error', error: { code: 'MISSING_PARAMS', message: 'id and field are required for addToSet' } };
+          }
+          const data = await repo.addToSet(req.id, req.field, req.value);
+          this.emit('entity.updated', { entity: req.entity, id: req.id, data });
+          return { status: 'ok', data };
+        }
+
+        case 'pull': {
+          if (!req.id || !req.field) {
+            return { status: 'error', error: { code: 'MISSING_PARAMS', message: 'id and field are required for pull' } };
+          }
+          const data = await repo.pull(req.id, req.field, req.value);
+          this.emit('entity.updated', { entity: req.entity, id: req.id, data });
+          return { status: 'ok', data };
+        }
+
+        case 'increment': {
+          if (!req.id || !req.field || req.amount === undefined) {
+            return { status: 'error', error: { code: 'MISSING_PARAMS', message: 'id, field and amount are required for increment' } };
+          }
+          const data = await repo.increment(req.id, req.field, req.amount);
+          this.emit('entity.updated', { entity: req.entity, id: req.id, data });
+          return { status: 'ok', data };
+        }
+
         default:
           return {
             status: 'error',
