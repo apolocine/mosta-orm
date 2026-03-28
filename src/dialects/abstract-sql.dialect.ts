@@ -1261,8 +1261,12 @@ export abstract class AbstractSqlDialect implements IDialect {
 
         const populated: Record<string, unknown>[] = [];
         for (const jr of junctionRows) {
-          const related = await this.findById<Record<string, unknown>>(targetSchema, jr[targetKey], selectOpts);
-          if (related) populated.push(related);
+          // Oracle returns column names in UPPERCASE — do case-insensitive lookup
+          const targetId = jr[targetKey] || jr[targetKey.toUpperCase()] || jr[targetKey.toLowerCase()];
+          if (targetId) {
+            const related = await this.findById<Record<string, unknown>>(targetSchema, String(targetId), selectOpts);
+            if (related) populated.push(related);
+          }
         }
         result[relName] = populated;
       } else if (relDef.type === 'one-to-many') {

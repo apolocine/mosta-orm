@@ -21,7 +21,11 @@ export type OrmOperation =
   | 'search'
   | 'aggregate'
   | 'upsert'
-  | 'stream';
+  | 'stream'
+  | 'updateMany'
+  | 'addToSet'
+  | 'pull'
+  | 'increment';
 
 export interface OrmRequest {
   /** Operation to perform */
@@ -53,6 +57,15 @@ export interface OrmRequest {
 
   /** Aggregate pipeline stages — for aggregate operation */
   stages?: AggregateStage[];
+
+  /** Field name — for addToSet, pull, increment */
+  field?: string;
+
+  /** Value — for addToSet, pull */
+  value?: unknown;
+
+  /** Amount — for increment */
+  amount?: number;
 }
 
 // ============================================================
