@@ -658,6 +658,55 @@ class MongoDialect implements IDialect {
     q = applyOptions(q, options);
     return q.lean() as Promise<T[]>;
   }
+
+  // ── Schema management ────────────────────────────────
+
+  async truncateTable(tableName: string): Promise<void> {
+    const model = mongoose.models[tableName] || mongoose.connection.collection(tableName);
+    if ('deleteMany' in model) {
+      await model.deleteMany({});
+    } else {
+      await (model as any).drop().catch(() => {});
+    }
+  }
+
+  async truncateAll(schemas: import('../core/types.js').EntitySchema[]): Promise<string[]> {
+    const truncated: string[] = [];
+    for (const schema of schemas) {
+      try {
+        const col = mongoose.connection.collection(schema.collection);
+        await col.deleteMany({});
+        truncated.push(schema.collection);
+      } catch {}
+    }
+    return truncated;
+  }
+
+  async dropTable(tableName: string): Promise<void> {
+    try {
+      await mongoose.connection.collection(tableName).drop();
+    } catch {}
+  }
+
+  async dropAllTables(): Promise<void> {
+    const collections = await mongoose.connection.db!.listCollections().toArray();
+    for (const col of collections) {
+      try {
+        await mongoose.connection.collection(col.name).drop();
+      } catch {}
+    }
+  }
+
+  async dropSchema(schemas: import('../core/types.js').EntitySchema[]): Promise<string[]> {
+    const dropped: string[] = [];
+    for (const schema of schemas) {
+      try {
+        await mongoose.connection.collection(schema.collection).drop();
+        dropped.push(schema.collection);
+      } catch {}
+    }
+    return dropped;
+  }
 }
 
 // ============================================================

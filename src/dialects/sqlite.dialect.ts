@@ -1257,6 +1257,64 @@ class SQLiteDialect implements IDialect {
     if (!this.db) throw new Error('SQLite not connected. Call connect() first.');
     return this.db;
   }
+
+  // ── Schema management (truncate / drop) ────────────
+
+  async truncateTable(tableName: string): Promise<void> {
+    this.getDb().exec(`DELETE FROM "${tableName}"`);
+  }
+
+  async truncateAll(schemas: import('../core/types.js').EntitySchema[]): Promise<string[]> {
+    const db = this.getDb();
+    const truncated: string[] = [];
+    db.pragma('foreign_keys = OFF');
+    // Junction tables first
+    for (const schema of schemas) {
+      for (const [, rel] of Object.entries(schema.relations || {})) {
+        if (rel.type === 'many-to-many' && rel.through) {
+          try { db.exec(`DELETE FROM "${rel.through}"`); truncated.push(rel.through); } catch {}
+        }
+      }
+    }
+    for (const schema of schemas) {
+      try { db.exec(`DELETE FROM "${schema.collection}"`); truncated.push(schema.collection); } catch {}
+    }
+    db.pragma('foreign_keys = ON');
+    return truncated;
+  }
+
+  async dropTable(tableName: string): Promise<void> {
+    this.getDb().exec(`DROP TABLE IF EXISTS "${tableName}"`);
+  }
+
+  async dropAllTables(): Promise<void> {
+    const db = this.getDb();
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+    db.pragma('foreign_keys = OFF');
+    for (const t of tables) {
+      db.exec(`DROP TABLE IF EXISTS "${t.name}"`);
+    }
+    db.pragma('foreign_keys = ON');
+  }
+
+  async dropSchema(schemas: import('../core/types.js').EntitySchema[]): Promise<string[]> {
+    const db = this.getDb();
+    const dropped: string[] = [];
+    db.pragma('foreign_keys = OFF');
+    // Junction tables first
+    for (const schema of schemas) {
+      for (const [, rel] of Object.entries(schema.relations || {})) {
+        if (rel.type === 'many-to-many' && rel.through) {
+          try { db.exec(`DROP TABLE IF EXISTS "${rel.through}"`); dropped.push(rel.through); } catch {}
+        }
+      }
+    }
+    for (const schema of schemas) {
+      try { db.exec(`DROP TABLE IF EXISTS "${schema.collection}"`); dropped.push(schema.collection); } catch {}
+    }
+    db.pragma('foreign_keys = ON');
+    return dropped;
+  }
 }
 
 // ============================================================

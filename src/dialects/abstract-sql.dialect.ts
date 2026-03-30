@@ -1535,18 +1535,80 @@ export abstract class AbstractSqlDialect implements IDialect {
   }
 
   /** Drop all tables (used by 'create' and 'create-drop' strategies) */
-  protected async dropAllTables(): Promise<void> {
+  /** Truncate (empty) a single table — keeps structure, deletes all data */
+  async truncateTable(tableName: string): Promise<void> {
+    await this.executeRun(`DELETE FROM ${this.quoteIdentifier(tableName)}`, []);
+    this.log('TRUNCATE', tableName);
+  }
+
+  /** Truncate all registered schema tables — junction tables first, then entities */
+  async truncateAll(schemas: import('../core/types.js').EntitySchema[]): Promise<string[]> {
+    const truncated: string[] = [];
+    // Junction tables first (foreign key constraints)
+    for (const schema of schemas) {
+      for (const [, rel] of Object.entries(schema.relations || {})) {
+        if (rel.type === 'many-to-many' && rel.through) {
+          try {
+            await this.truncateTable(rel.through);
+            truncated.push(rel.through);
+          } catch {}
+        }
+      }
+    }
+    // Entity tables
+    for (const schema of schemas) {
+      try {
+        await this.truncateTable(schema.collection);
+        truncated.push(schema.collection);
+      } catch {}
+    }
+    return truncated;
+  }
+
+  /** Drop a single table by name */
+  async dropTable(tableName: string): Promise<void> {
+    await this.executeRun(`DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)} CASCADE`, []);
+    this.log('DROP_TABLE', tableName);
+  }
+
+  /** Drop all tables in the database (dangerous) */
+  async dropAllTables(): Promise<void> {
     try {
       const query = this.getTableListQuery();
       const rows = await this.executeQuery<Record<string, unknown>>(query, []);
       for (const row of rows) {
         const name = (row.name || row.TABLE_NAME || row.table_name || Object.values(row)[0]) as string;
         if (name) {
-          await this.executeRun(`DROP TABLE ${this.quoteIdentifier(name)}`, []);
+          await this.executeRun(`DROP TABLE IF EXISTS ${this.quoteIdentifier(name)} CASCADE`, []);
         }
       }
+      this.log('DROP_ALL_TABLES', 'all', { count: rows.length });
     } catch {
       // Ignore errors during drop
     }
+  }
+
+  /** Drop tables for registered schemas + their junction tables */
+  async dropSchema(schemas: import('../core/types.js').EntitySchema[]): Promise<string[]> {
+    const dropped: string[] = [];
+    // Drop junction tables first (foreign key constraints)
+    for (const schema of schemas) {
+      for (const [, rel] of Object.entries(schema.relations || {})) {
+        if (rel.type === 'many-to-many' && rel.through) {
+          try {
+            await this.dropTable(rel.through);
+            dropped.push(rel.through);
+          } catch {}
+        }
+      }
+    }
+    // Drop entity tables
+    for (const schema of schemas) {
+      try {
+        await this.dropTable(schema.collection);
+        dropped.push(schema.collection);
+      } catch {}
+    }
+    return dropped;
   }
 }
