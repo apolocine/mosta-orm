@@ -369,6 +369,18 @@ export interface IDialect {
     fields: string[],
     options?: QueryOptions,
   ): Promise<T[]>;
+
+  // --- Schema management ---
+  /** Drop a single table by name */
+  dropTable?(tableName: string): Promise<void>;
+  /** Drop all tables in the database (dangerous) */
+  dropAllTables?(): Promise<void>;
+  /** Drop tables for registered schemas + their junction tables */
+  dropSchema?(schemas: EntitySchema[]): Promise<string[]>;
+  /** Truncate (empty) a single table — keeps structure, deletes data */
+  truncateTable?(tableName: string): Promise<void>;
+  /** Truncate all registered schema tables — keeps structure, deletes data */
+  truncateAll?(schemas: EntitySchema[]): Promise<string[]>;
 }
 
 // ============================================================

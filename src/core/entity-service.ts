@@ -116,11 +116,18 @@ export class EntityService extends EventEmitter {
 
       switch (req.op) {
         case 'findAll': {
-          const data = await repo.findAll(req.filter || {}, req.options);
+          const data = req.relations?.length
+            ? await repo.findWithRelations(req.filter || {}, req.relations, req.options)
+            : await repo.findAll(req.filter || {}, req.options);
           return { status: 'ok', data, metadata: { count: data.length } };
         }
 
         case 'findOne': {
+          // findOne with relations: findWithRelations + limit 1
+          if (req.relations?.length) {
+            const rows = await repo.findWithRelations(req.filter || {}, req.relations, { ...req.options, limit: 1 });
+            return { status: 'ok', data: rows[0] ?? null };
+          }
           const data = await repo.findOne(req.filter || {}, req.options);
           return { status: 'ok', data };
         }
@@ -139,7 +146,12 @@ export class EntityService extends EventEmitter {
           if (!req.data) {
             return { status: 'error', error: { code: 'MISSING_DATA', message: 'data is required for create' } };
           }
-          const data = await repo.create(req.data);
+          let data = await repo.create(req.data);
+          // Populate relations on the created entity if requested
+          if (req.relations?.length && data && (data as any).id) {
+            const populated = await repo.findByIdWithRelations((data as any).id, req.relations);
+            if (populated) data = populated;
+          }
           this.emit('entity.created', { entity: req.entity, data });
           return { status: 'ok', data };
         }
@@ -151,7 +163,12 @@ export class EntityService extends EventEmitter {
           if (!req.data) {
             return { status: 'error', error: { code: 'MISSING_DATA', message: 'data is required for update' } };
           }
-          const data = await repo.update(req.id, req.data);
+          let data = await repo.update(req.id, req.data);
+          // Populate relations on the updated entity if requested
+          if (req.relations?.length && data) {
+            const populated = await repo.findByIdWithRelations(req.id, req.relations);
+            if (populated) data = populated;
+          }
           if (data) this.emit('entity.updated', { entity: req.entity, id: req.id, data });
           return { status: 'ok', data };
         }
@@ -180,6 +197,14 @@ export class EntityService extends EventEmitter {
             return { status: 'error', error: { code: 'MISSING_QUERY', message: 'query is required for search' } };
           }
           const data = await repo.search(req.query, req.options);
+          // Populate relations on search results if requested
+          if (req.relations?.length && data.length > 0) {
+            const populated = await repo.findWithRelations(
+              { id: { $in: data.map((d: any) => d.id) } },
+              req.relations, req.options
+            );
+            return { status: 'ok', data: populated, metadata: { count: populated.length } };
+          }
           return { status: 'ok', data, metadata: { count: data.length } };
         }
 
@@ -195,7 +220,12 @@ export class EntityService extends EventEmitter {
           if (!req.filter || !req.data) {
             return { status: 'error', error: { code: 'MISSING_PARAMS', message: 'filter and data are required for upsert' } };
           }
-          const data = await repo.upsert(req.filter, req.data);
+          let data = await repo.upsert(req.filter, req.data);
+          // Populate relations on the upserted entity if requested
+          if (req.relations?.length && data && (data as any).id) {
+            const populated = await repo.findByIdWithRelations((data as any).id, req.relations);
+            if (populated) data = populated;
+          }
           this.emit('entity.upserted', { entity: req.entity, data });
           return { status: 'ok', data };
         }
