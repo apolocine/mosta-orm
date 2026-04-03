@@ -1,7 +1,15 @@
 // SQLite Dialect — implements IDialect with better-sqlite3
 // Equivalent to org.hibernate.dialect.SQLiteDialect
 // Author: Dr Hamid MADANI drmdh@msn.com
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
+let _Database: typeof Database | null = null;
+async function loadDatabase(): Promise<typeof Database> {
+  if (!_Database) {
+    const mod = await import('better-sqlite3');
+    _Database = mod.default;
+  }
+  return _Database;
+}
 import { randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -140,7 +148,7 @@ function deserializeRow(row: Record<string, unknown>, schema: EntitySchema): Rec
   }
 
   // Ensure many-to-many relations default to [] even when no column exists in SQL row
-  for (const [relName, relDef] of Object.entries(schema.relations)) {
+  for (const [relName, relDef] of Object.entries(schema.relations || {})) {
     if (relDef.type === 'many-to-many' && !(relName in result)) {
       result[relName] = [];
     }
@@ -327,9 +335,9 @@ function buildSelectColumns(schema: EntitySchema, options?: QueryOptions): strin
 
 function getAllColumns(schema: EntitySchema): string[] {
   const cols = ['id'];
-  cols.push(...Object.keys(schema.fields));
+  cols.push(...Object.keys(schema.fields || {}));
   // Skip many-to-many relations (no column in entity table)
-  for (const [name, rel] of Object.entries(schema.relations)) {
+  for (const [name, rel] of Object.entries(schema.relations || {})) {
     if (rel.type !== 'many-to-many') {
       cols.push(name);
     }
@@ -368,7 +376,7 @@ function prepareInsertData(
   const values: unknown[] = [id];
 
   // Fields
-  for (const [name, field] of Object.entries(schema.fields)) {
+  for (const [name, field] of Object.entries(schema.fields || {})) {
     if (name in data) {
       columns.push(name);
       placeholders.push('?');
@@ -382,7 +390,7 @@ function prepareInsertData(
   }
 
   // Relations
-  for (const [name, rel] of Object.entries(schema.relations)) {
+  for (const [name, rel] of Object.entries(schema.relations || {})) {
     if (rel.type === 'many-to-many') {
       // Handled by junction table, skip column insert
       continue;
@@ -420,7 +428,7 @@ function prepareInsertData(
   }
 
   // Extra columns not in schema.fields or relations (e.g. discriminator _type)
-  const relationKeys = new Set(Object.keys(schema.relations));
+  const relationKeys = new Set(Object.keys(schema.relations || {}));
   for (const key of Object.keys(data)) {
     if (!columns.includes(key) && key !== 'id' && !relationKeys.has(key)) {
       columns.push(key);
@@ -483,7 +491,7 @@ function generateCreateTable(schema: EntitySchema): string {
   const cols: string[] = ['  "id" TEXT PRIMARY KEY'];
 
   // Fields
-  for (const [name, field] of Object.entries(schema.fields)) {
+  for (const [name, field] of Object.entries(schema.fields || {})) {
     let colDef = `  ${quoteCol(name)} ${fieldToSqlType(field)}`;
     if (field.required) colDef += ' NOT NULL';
     if (field.unique) colDef += ' UNIQUE';
@@ -496,7 +504,7 @@ function generateCreateTable(schema: EntitySchema): string {
   }
 
   // Relations
-  for (const [name, rel] of Object.entries(schema.relations)) {
+  for (const [name, rel] of Object.entries(schema.relations || {})) {
     if (rel.type === 'many-to-many') {
       // Handled by junction table, no column in entity table
       continue;
@@ -590,15 +598,16 @@ class SQLiteDialect implements IDialect {
     highlightEnabled = config.highlightSql ?? false;
 
     // Ensure parent directory exists for file-based DBs
+    const Db = await loadDatabase();
     if (config.uri !== ':memory:') {
       const dbPath = resolve(config.uri);
       const dbDir = dirname(dbPath);
       if (!existsSync(dbDir)) {
         mkdirSync(dbDir, { recursive: true });
       }
-      this.db = new Database(dbPath);
+      this.db = new Db(dbPath);
     } else {
-      this.db = new Database(':memory:');
+      this.db = new Db(':memory:');
     }
 
     // WAL mode for better concurrency
@@ -706,7 +715,7 @@ class SQLiteDialect implements IDialect {
 
     // Create junction tables for many-to-many relations
     for (const schema of schemas) {
-      for (const [, rel] of Object.entries(schema.relations)) {
+      for (const [, rel] of Object.entries(schema.relations || {})) {
         if (rel.type === 'many-to-many' && rel.through) {
           const targetSchema = schemas.find(s => s.name === rel.target);
           if (!targetSchema) continue;
@@ -778,7 +787,7 @@ class SQLiteDialect implements IDialect {
 
     // Insert junction table rows for many-to-many relations
     const entityId = values[0] as string;
-    for (const [relName, rel] of Object.entries(schema.relations)) {
+    for (const [relName, rel] of Object.entries(schema.relations || {})) {
       if (rel.type === 'many-to-many' && rel.through && Array.isArray(data[relName])) {
         const sourceKey = `${schema.name.toLowerCase()}Id`;
         const targetKey = `${rel.target.toLowerCase()}Id`;
@@ -813,7 +822,7 @@ class SQLiteDialect implements IDialect {
     }
 
     // Replace junction table rows for many-to-many relations
-    for (const [relName, rel] of Object.entries(schema.relations)) {
+    for (const [relName, rel] of Object.entries(schema.relations || {})) {
       if (rel.type === 'many-to-many' && rel.through && relName in data) {
         const sourceKey = `${schema.name.toLowerCase()}Id`;
         const targetKey = `${rel.target.toLowerCase()}Id`;
