@@ -5,10 +5,11 @@ import type Database from 'better-sqlite3';
 let _Database: typeof Database | null = null;
 async function loadDatabase(): Promise<typeof Database> {
   if (!_Database) {
-    const mod = await import('better-sqlite3');
+    const pkg = 'better-sqlite' + '3';
+    const mod = await import(/* webpackIgnore: true */ pkg);
     _Database = mod.default;
   }
-  return _Database;
+  return _Database!;
 }
 import { randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
