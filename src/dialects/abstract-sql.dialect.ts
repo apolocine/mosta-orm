@@ -354,7 +354,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     }
 
     // Ensure many-to-many relations default to []
-    for (const [relName, relDef] of Object.entries(schema.relations)) {
+    for (const [relName, relDef] of Object.entries(schema.relations || {})) {
       if (relDef.type === 'many-to-many' && !(relName in result)) {
         result[relName] = [];
       }
@@ -547,8 +547,8 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   protected getAllColumns(schema: EntitySchema): string[] {
     const cols = ['id'];
-    cols.push(...Object.keys(schema.fields));
-    for (const [name, rel] of Object.entries(schema.relations)) {
+    cols.push(...Object.keys(schema.fields || {}));
+    for (const [name, rel] of Object.entries(schema.relations || {})) {
       if (rel.type !== 'many-to-many') {
         cols.push(name);
       }
@@ -585,7 +585,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     const id = (data.id as string) || randomUUID();
     const values: unknown[] = [id];
 
-    for (const [name, field] of Object.entries(schema.fields)) {
+    for (const [name, field] of Object.entries(schema.fields || {})) {
       if (name in data) {
         columns.push(name);
         placeholders.push(this.nextPlaceholder());
@@ -598,7 +598,7 @@ export abstract class AbstractSqlDialect implements IDialect {
       }
     }
 
-    for (const [name, rel] of Object.entries(schema.relations)) {
+    for (const [name, rel] of Object.entries(schema.relations || {})) {
       if (rel.type === 'many-to-many') continue;
       if (name in data) {
         columns.push(name);
@@ -631,7 +631,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     }
 
     // Extra columns not in schema.fields or relations (e.g. discriminator _type)
-    const relationKeys = new Set(Object.keys(schema.relations));
+    const relationKeys = new Set(Object.keys(schema.relations || {}));
     for (const key of Object.keys(data)) {
       if (!columns.includes(key) && key !== 'id' && !relationKeys.has(key)) {
         columns.push(key);
@@ -691,7 +691,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     const q = (name: string) => this.quoteIdentifier(name);
     const cols: string[] = [`  ${q('id')} ${this.getIdColumnType()} PRIMARY KEY`];
 
-    for (const [name, field] of Object.entries(schema.fields)) {
+    for (const [name, field] of Object.entries(schema.fields || {})) {
       let colDef = `  ${q(name)} ${this.fieldToSqlType(field)}`;
       // DEFAULT must come before NOT NULL for HSQLDB compatibility
       if (field.default !== undefined && field.default !== 'now' && field.default !== null) {
@@ -704,7 +704,7 @@ export abstract class AbstractSqlDialect implements IDialect {
       cols.push(colDef);
     }
 
-    for (const [name, rel] of Object.entries(schema.relations)) {
+    for (const [name, rel] of Object.entries(schema.relations || {})) {
       if (rel.type === 'many-to-many') continue;
       if (rel.type === 'one-to-many') {
         cols.push(`  ${q(name)} ${this.fieldToSqlType({ type: 'json' })} DEFAULT '[]'`);
@@ -891,7 +891,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     // Create junction tables for many-to-many relations
     for (const schema of schemas) {
-      for (const [, rel] of Object.entries(schema.relations)) {
+      for (const [, rel] of Object.entries(schema.relations || {})) {
         if (rel.type === 'many-to-many' && rel.through) {
           const targetSchema = schemas.find(s => s.name === rel.target);
           if (!targetSchema) continue;
@@ -966,11 +966,17 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     // Insert junction table rows for many-to-many
     const entityId = values[0] as string;
-    for (const [relName, rel] of Object.entries(schema.relations)) {
-      if (rel.type === 'many-to-many' && rel.through && Array.isArray(data[relName])) {
+    for (const [relName, rel] of Object.entries(schema.relations || {})) {
+      if (rel.type === 'many-to-many' && rel.through && data[relName] != null) {
+        // Normalize: accept array, CSV string, or single ID
+        let relIds = data[relName];
+        if (!Array.isArray(relIds)) {
+          relIds = typeof relIds === 'string' ? (relIds as string).split(',').map(s => s.trim()).filter(Boolean) : [relIds];
+        }
+        if (!(relIds as unknown[]).length) continue;
         const sourceKey = `${schema.name.toLowerCase()}Id`;
         const targetKey = `${rel.target.toLowerCase()}Id`;
-        for (const targetId of data[relName] as unknown[]) {
+        for (const targetId of relIds as unknown[]) {
           this.resetParams();
           const p1 = this.nextPlaceholder();
           const p2 = this.nextPlaceholder();
@@ -1003,7 +1009,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     }
 
     // Replace junction table rows for many-to-many
-    for (const [relName, rel] of Object.entries(schema.relations)) {
+    for (const [relName, rel] of Object.entries(schema.relations || {})) {
       if (rel.type === 'many-to-many' && rel.through && relName in data) {
         const sourceKey = `${schema.name.toLowerCase()}Id`;
         const targetKey = `${rel.target.toLowerCase()}Id`;
@@ -1013,8 +1019,13 @@ export abstract class AbstractSqlDialect implements IDialect {
           `DELETE FROM ${this.quoteIdentifier(rel.through)} WHERE ${this.quoteIdentifier(sourceKey)} = ${delPh}`,
           [id]
         );
-        if (Array.isArray(data[relName])) {
-          for (const targetId of data[relName] as unknown[]) {
+        // Normalize: accept array, CSV string, or single ID
+        let relIds = data[relName];
+        if (relIds != null) {
+          if (!Array.isArray(relIds)) {
+            relIds = typeof relIds === 'string' ? (relIds as string).split(',').map(s => s.trim()).filter(Boolean) : [relIds];
+          }
+          for (const targetId of relIds as unknown[]) {
             this.resetParams();
             const p1 = this.nextPlaceholder();
             const p2 = this.nextPlaceholder();

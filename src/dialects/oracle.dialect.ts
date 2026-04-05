@@ -278,7 +278,7 @@ class OracleDialect extends AbstractSqlDialect {
 
     // Junction tables
     for (const schema of schemas) {
-      for (const [, rel] of Object.entries(schema.relations) as [string, RelationDef][]) {
+      for (const [, rel] of Object.entries(schema.relations || {}) as [string, RelationDef][]) {
         if (rel.type === 'many-to-many' && rel.through) {
           const exists = await this.tableExists(rel.through);
           if (exists) continue;
@@ -325,7 +325,7 @@ class OracleDialect extends AbstractSqlDialect {
     if (!row) return row;
     // Build map: UPPERCASE key → schema field name
     const upperToField: Record<string, string> = { ID: 'id', CREATEDAT: 'createdAt', UPDATEDAT: 'updatedAt' };
-    for (const fieldName of Object.keys(schema.fields)) {
+    for (const fieldName of Object.keys(schema.fields || {})) {
       upperToField[fieldName.toUpperCase()] = fieldName;
     }
     for (const [relName] of Object.entries(schema.relations || {})) {
