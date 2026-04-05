@@ -102,13 +102,25 @@ class DB2Dialect extends AbstractSqlDialect {
   async doConnect(config: ConnectionConfig): Promise<void> {
     try {
       this.ibmDb = await import(/* webpackIgnore: true */ 'ibm_db' as string);
-      const open = (this.ibmDb as { open(connStr: string): Promise<unknown> }).open
-        || (this.ibmDb as { default: { open(connStr: string): Promise<unknown> } }).default.open;
-      this.conn = await open(config.uri);
     } catch (e: unknown) {
       throw new Error(
         `IBM DB2 driver not found. Install it: npm install ibm_db\n` +
         `Original error: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    try {
+      // Parse db2://user:pass@host:port/database → ODBC connection string
+      let connStr = config.uri;
+      if (connStr.startsWith('db2://')) {
+        const url = new URL(connStr);
+        connStr = `DATABASE=${url.pathname.replace('/', '')};HOSTNAME=${url.hostname};PORT=${url.port || '50000'};PROTOCOL=TCPIP;UID=${decodeURIComponent(url.username)};PWD=${decodeURIComponent(url.password)};`;
+      }
+      const mod = this.ibmDb as any;
+      const open = mod.open || mod.default?.open;
+      this.conn = await open(connStr);
+    } catch (e: unknown) {
+      throw new Error(
+        `IBM DB2 connection failed: ${e instanceof Error ? e.message : String(e)}`
       );
     }
   }
@@ -195,7 +207,7 @@ class DB2Dialect extends AbstractSqlDialect {
 
     // Junction tables
     for (const schema of schemas) {
-      for (const [, rel] of Object.entries(schema.relations) as [string, RelationDef][]) {
+      for (const [, rel] of Object.entries(schema.relations || {}) as [string, RelationDef][]) {
         if (rel.type === 'many-to-many' && rel.through) {
           const exists = await this.tableExists(rel.through);
           if (exists) continue;
