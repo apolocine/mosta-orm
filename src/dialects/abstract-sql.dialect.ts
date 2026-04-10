@@ -690,6 +690,8 @@ export abstract class AbstractSqlDialect implements IDialect {
     const cols: string[] = [`  ${q('id')} ${this.getIdColumnType()} PRIMARY KEY`];
 
     for (const [name, field] of Object.entries(schema.fields || {})) {
+      // Skip 'id' — already added as PK above
+      if (name === 'id') continue;
       let colDef = `  ${q(name)} ${this.fieldToSqlType(field)}`;
       // DEFAULT must come before NOT NULL for HSQLDB compatibility
       if (field.default !== undefined && field.default !== 'now' && field.default !== null) {
