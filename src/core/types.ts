@@ -36,6 +36,15 @@ export interface EmbeddedSchemaDef {
 
 export type RelationType = 'one-to-one' | 'many-to-one' | 'one-to-many' | 'many-to-many';
 
+/** Cascade operations — equivalent to JPA CascadeType */
+export type CascadeType = 'persist' | 'merge' | 'remove' | 'all';
+
+/** Fetch strategy — equivalent to JPA FetchType */
+export type FetchType = 'lazy' | 'eager';
+
+/** Referential action on delete — equivalent to SQL ON DELETE */
+export type OnDeleteAction = 'cascade' | 'set-null' | 'restrict' | 'no-action';
+
 export interface RelationDef {
   /** Target entity name (e.g. 'User', 'Client') */
   target: string;
@@ -47,6 +56,57 @@ export interface RelationDef {
   nullable?: boolean;
   /** Junction table name (SQL dialects) — convention: "{source}_{target}" in snake_case */
   through?: string;
+
+  // --- Hibernate-inspired relation options (P1-4) ---
+
+  /**
+   * Cascade operations to propagate to related entities.
+   * Equivalent to JPA @OneToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE})
+   * WARNING: never use 'remove' or 'all' on many-to-many (would delete the target entity!)
+   */
+  cascade?: CascadeType[];
+
+  /**
+   * Remove orphaned entities when detached from the collection.
+   * Equivalent to JPA @OneToMany(orphanRemoval = true)
+   * Only supported on one-to-one and one-to-many (not many-to-many, like Hibernate).
+   */
+  orphanRemoval?: boolean;
+
+  /**
+   * Fetch strategy: eager (load immediately) or lazy (load on demand).
+   * Equivalent to JPA @ManyToOne(fetch = FetchType.LAZY)
+   * Defaults: many-to-one/one-to-one = eager, one-to-many/many-to-many = lazy
+   */
+  fetch?: FetchType;
+
+  /**
+   * Inverse field name on the target entity (bidirectional relation).
+   * Equivalent to JPA @OneToMany(mappedBy = "parent")
+   * For one-to-many: specifies the FK column name on the child table.
+   * Without mappedBy, O2M is unidirectional (Hibernate creates a junction table = anti-pattern).
+   */
+  mappedBy?: string;
+
+  /**
+   * Explicit FK column name on the owning side.
+   * Equivalent to JPA @JoinColumn(name = "category_id")
+   * Default: relation field name (e.g. 'category' → column 'category')
+   */
+  joinColumn?: string;
+
+  /**
+   * Explicit FK column name on the inverse side of a junction table (M2M only).
+   * Equivalent to JPA @JoinTable(inverseJoinColumns = @JoinColumn(name = "course_id"))
+   */
+  inverseJoinColumn?: string;
+
+  /**
+   * Referential action when the referenced entity is deleted.
+   * Equivalent to SQL ON DELETE CASCADE / SET NULL / RESTRICT
+   * Default: nullable ? 'set-null' : 'restrict'
+   */
+  onDelete?: OnDeleteAction;
 }
 
 export type IndexType = 'asc' | 'desc' | 'text';
@@ -369,6 +429,12 @@ export interface IDialect {
     fields: string[],
     options?: QueryOptions,
   ): Promise<T[]>;
+
+  // --- Raw query execution (dialect-agnostic) ---
+  /** Execute a raw SELECT query and return rows */
+  executeQuery?<T = Record<string, unknown>>(sql: string, params: unknown[]): Promise<T[]>;
+  /** Execute a raw non-SELECT statement (INSERT, UPDATE, DELETE) */
+  executeRun?(sql: string, params: unknown[]): Promise<{ changes: number }>;
 
   // --- Schema management ---
   /** Drop a single table by name */

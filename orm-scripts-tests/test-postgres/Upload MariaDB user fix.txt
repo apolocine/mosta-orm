@@ -1,0 +1,20 @@
+#    Upload MariaDB user fix script
+scp /dev/stdin amia:/tmp/fix-maria-user.sh 2>&1 <<'SCRIPT' | grep -v "cannot
+   listen\|Address already\|Could not request"
+   #!/bin/bash
+   # Créer devuser sur MariaDB via le bon socket
+   SOCK="/run/mysqld-mariadb/mysqld.sock"
+   mysql -S "$SOCK" -u root <<'SQL'
+   CREATE USER IF NOT EXISTS 'devuser'@'localhost' IDENTIFIED BY 'devpass26';
+   GRANT ALL PRIVILEGES ON *.* TO 'devuser'@'localhost' WITH GRANT OPTION;
+   CREATE USER IF NOT EXISTS 'devuser'@'127.0.0.1' IDENTIFIED BY 'devpass26';
+   GRANT ALL PRIVILEGES ON *.* TO 'devuser'@'127.0.0.1' WITH GRANT OPTION;
+   CREATE DATABASE IF NOT EXISTS testormdb;
+   FLUSH PRIVILEGES;
+   SQL
+   echo "Done. Testing..."
+   mysql -h 127.0.0.1 -P 3307 -u devuser -pdevpass26 -e "SELECT VERSION() AS v,
+   'MariaDB OK' AS status;"
+   SCRIPT
+
+

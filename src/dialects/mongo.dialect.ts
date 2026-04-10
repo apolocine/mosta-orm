@@ -278,6 +278,30 @@ class MongoDialect implements IDialect {
   readonly dialectType: DialectType = 'mongodb';
   private config: ConnectionConfig | null = null;
 
+  // Mongo normalizer: _id → id, remove __v (same principle as Oracle uppercase normalizer)
+  private normalize<T>(doc: unknown): T {
+    if (!doc) return doc as T;
+    if (Array.isArray(doc)) return doc.map(d => this.normalize<T>(d)) as unknown as T;
+    if (typeof doc === 'object' && doc !== null) {
+      const { _id, __v, ...rest } = doc as Record<string, unknown>;
+      const id = _id?.toString?.() ?? _id ?? (rest as Record<string, unknown>).id;
+      // Recursively normalize populated sub-documents
+      for (const key of Object.keys(rest)) {
+        const val = rest[key];
+        if (val && typeof val === 'object' && !Array.isArray(val) && (val as Record<string, unknown>)._id !== undefined) {
+          rest[key] = this.normalize(val);
+        } else if (Array.isArray(val)) {
+          rest[key] = val.map(item =>
+            item && typeof item === 'object' && (item as Record<string, unknown>)._id !== undefined
+              ? this.normalize(item) : item
+          );
+        }
+      }
+      return { id, ...rest } as T;
+    }
+    return doc as T;
+  }
+
   async connect(config: ConnectionConfig): Promise<void> {
     this.config = config;
     showSql = config.showSql ?? false;
@@ -374,7 +398,8 @@ class MongoDialect implements IDialect {
     logQuery('FIND', schema.collection, { filter: mongoFilter, options });
     let query = model.find(mongoFilter);
     query = applyOptions(query, options);
-    return query.lean() as Promise<T[]>;
+    const docs = await query.lean();
+    return this.normalize<T[]>(docs);
   }
 
   async findOne<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T | null> {
@@ -383,7 +408,8 @@ class MongoDialect implements IDialect {
     logQuery('FIND_ONE', schema.collection, { filter: mongoFilter });
     let query = model.findOne(mongoFilter);
     query = applyOptions(query, options);
-    return query.lean() as Promise<T | null>;
+    const doc = await query.lean();
+    return doc ? this.normalize<T>(doc) : null;
   }
 
   async findById<T>(schema: EntitySchema, id: string, options?: QueryOptions): Promise<T | null> {
@@ -392,7 +418,8 @@ class MongoDialect implements IDialect {
     logQuery('FIND_BY_ID', schema.collection, { id });
     let query = model.findOne(mongoFilter);
     query = applyOptions(query, options);
-    return query.lean() as Promise<T | null>;
+    const doc = await query.lean();
+    return doc ? this.normalize<T>(doc) : null;
   }
 
   async create<T>(schema: EntitySchema, data: Record<string, unknown>): Promise<T> {
@@ -400,14 +427,15 @@ class MongoDialect implements IDialect {
     const insertData = applyDiscriminatorToData(data, schema);
     logQuery('CREATE', schema.collection, insertData);
     const doc = await model.create(insertData);
-    return doc.toObject() as T;
+    return this.normalize<T>(doc.toObject());
   }
 
   async update<T>(schema: EntitySchema, id: string, data: Record<string, unknown>): Promise<T | null> {
     const model = getModel(schema);
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('UPDATE', schema.collection, { id, data });
-    return model.findOneAndUpdate(mongoFilter, data, { returnDocument: 'after' }).lean() as Promise<T | null>;
+    const doc = await model.findOneAndUpdate(mongoFilter, data, { returnDocument: 'after' }).lean();
+    return doc ? this.normalize<T>(doc) : null;
   }
 
   async updateMany(schema: EntitySchema, filter: DALFilter, data: Record<string, unknown>): Promise<number> {
@@ -523,10 +551,14 @@ class MongoDialect implements IDialect {
     const mongoFilter = translateFilter(applyAllFilters(filter, schema));
     logQuery('FIND_WITH_RELATIONS', schema.collection, { filter: mongoFilter, relations });
 
+    // Separate O2M relations (require manual FK query) from M2O/O2O/M2M (use .populate)
+    const o2mRels = relations.filter(r => schema.relations[r]?.type === 'one-to-many');
+    const populateRels = relations.filter(r => schema.relations[r]?.type !== 'one-to-many');
+
     let query = model.find(mongoFilter);
     query = applyOptions(query, options);
 
-    for (const rel of relations) {
+    for (const rel of populateRels) {
       const relDef = schema.relations[rel];
       if (relDef?.select) {
         query = query.populate(rel, relDef.select.join(' '));
@@ -535,7 +567,25 @@ class MongoDialect implements IDialect {
       }
     }
 
-    return query.lean() as Promise<T[]>;
+    const docs = await query.lean();
+    const normalized = this.normalize<Record<string, unknown>[]>(docs);
+
+    // O2M: query child collection by FK for each doc
+    if (o2mRels.length > 0) {
+      for (const doc of normalized) {
+        for (const rel of o2mRels) {
+          const relDef = schema.relations[rel];
+          const fkField = relDef.mappedBy || `${schema.name.toLowerCase()}Id`;
+          const children = await this.find(
+            { name: relDef.target, collection: getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false }).collection.name, fields: {}, relations: {}, indexes: [], timestamps: false } as EntitySchema,
+            { [fkField]: doc.id }
+          );
+          doc[rel] = children;
+        }
+      }
+    }
+
+    return normalized as unknown as T[];
   }
 
   async findByIdWithRelations<T>(
@@ -548,10 +598,13 @@ class MongoDialect implements IDialect {
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('FIND_BY_ID_WITH_RELATIONS', schema.collection, { id, relations });
 
+    const o2mRels = relations.filter(r => schema.relations[r]?.type === 'one-to-many');
+    const populateRels = relations.filter(r => schema.relations[r]?.type !== 'one-to-many');
+
     let query = model.findOne(mongoFilter);
     query = applyOptions(query, options);
 
-    for (const rel of relations) {
+    for (const rel of populateRels) {
       const relDef = schema.relations[rel];
       if (relDef?.select) {
         query = query.populate(rel, relDef.select.join(' '));
@@ -560,7 +613,20 @@ class MongoDialect implements IDialect {
       }
     }
 
-    return query.lean() as Promise<T | null>;
+    const doc = await query.lean();
+    if (!doc) return null;
+    const normalized = this.normalize<Record<string, unknown>>(doc);
+
+    // O2M: query child collection by FK
+    for (const rel of o2mRels) {
+      const relDef = schema.relations[rel];
+      const fkField = relDef.mappedBy || `${schema.name.toLowerCase()}Id`;
+      const targetModel = getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false });
+      const children = await targetModel.find({ [fkField]: id }).lean();
+      normalized[rel] = this.normalize(children);
+    }
+
+    return normalized as T;
   }
 
   // --- Upsert (equivalent Hibernate saveOrUpdate / merge) ---
@@ -574,7 +640,7 @@ class MongoDialect implements IDialect {
       upsert: true,
       returnDocument: 'after',
     }).lean();
-    return result as T;
+    return this.normalize<T>(result);
   }
 
   // --- Atomic operations ---
@@ -587,7 +653,6 @@ class MongoDialect implements IDialect {
   ): Promise<Record<string, unknown>> {
     const model = getModel(schema);
     logQuery('INCREMENT', schema.collection, { id, field, amount });
-    // Determine if id is a valid ObjectId or a plain string (e.g. counter keys)
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
     const idVal = isObjectId ? new mongoose.Types.ObjectId(id) : id;
     const filter = translateFilter(applyAllFilters({ _id: idVal } as any, schema));
@@ -596,7 +661,7 @@ class MongoDialect implements IDialect {
       { $inc: { [field]: amount } },
       { returnDocument: 'after', upsert: true },
     );
-    return (result ?? {}) as Record<string, unknown>;
+    return this.normalize<Record<string, unknown>>(result ?? {});
   }
 
   // --- Array operations (equivalent Hibernate @ElementCollection management) ---
@@ -610,11 +675,12 @@ class MongoDialect implements IDialect {
     const model = getModel(schema);
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('ADD_TO_SET', schema.collection, { id, field, value });
-    return model.findOneAndUpdate(
+    const doc = await model.findOneAndUpdate(
       mongoFilter,
       { $addToSet: { [field]: value } },
       { returnDocument: 'after' },
-    ).lean() as Promise<Record<string, unknown> | null>;
+    ).lean();
+    return doc ? this.normalize<Record<string, unknown>>(doc) : null;
   }
 
   async pull(
@@ -626,11 +692,12 @@ class MongoDialect implements IDialect {
     const model = getModel(schema);
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('PULL', schema.collection, { id, field, value });
-    return model.findOneAndUpdate(
+    const doc = await model.findOneAndUpdate(
       mongoFilter,
       { $pull: { [field]: value } },
       { returnDocument: 'after' },
-    ).lean() as Promise<Record<string, unknown> | null>;
+    ).lean();
+    return doc ? this.normalize<Record<string, unknown>>(doc) : null;
   }
 
   // --- Text search ---
@@ -656,7 +723,8 @@ class MongoDialect implements IDialect {
 
     let q = model.find(translateFilter(filter));
     q = applyOptions(q, options);
-    return q.lean() as Promise<T[]>;
+    const docs = await q.lean();
+    return this.normalize<T[]>(docs);
   }
 
   // ── Schema management ────────────────────────────────

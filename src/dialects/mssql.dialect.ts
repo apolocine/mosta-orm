@@ -73,12 +73,14 @@ export class MSSQLDialect extends AbstractSqlDialect {
   protected buildLimitOffset(options?: QueryOptions): string {
     if (!options?.limit && !options?.skip) return '';
 
-    // SQL Server requires ORDER BY for OFFSET/FETCH
-    // If no ORDER BY was specified, use (SELECT NULL) as a workaround
+    // SQL Server REQUIRES ORDER BY before OFFSET/FETCH
+    // If no sort was specified, inject ORDER BY (SELECT NULL) as a no-op sort
+    const needsOrderBy = !options.sort || Object.keys(options.sort).length === 0;
     const offset = options.skip ?? 0;
     const limit = options.limit;
 
-    let sql = ` OFFSET ${offset} ROWS`;
+    let sql = needsOrderBy ? ' ORDER BY (SELECT NULL)' : '';
+    sql += ` OFFSET ${offset} ROWS`;
     if (limit) sql += ` FETCH NEXT ${limit} ROWS ONLY`;
     return sql;
   }
@@ -161,6 +163,36 @@ export class MSSQLDialect extends AbstractSqlDialect {
 
     const result = await request.query(sql);
     return { changes: result.rowsAffected?.[0] ?? 0 };
+  }
+
+  // SQL Server does not support DROP TABLE IF EXISTS ... CASCADE
+  // Must drop FK constraints first, then tables
+  async dropAllTables(): Promise<void> {
+    try {
+      // 1. Drop all foreign key constraints
+      const fks = await this.doExecuteQuery<Record<string, unknown>>(
+        `SELECT t.name AS tableName, fk.name AS fkName
+         FROM sys.foreign_keys fk
+         JOIN sys.tables t ON fk.parent_object_id = t.object_id`, []
+      );
+      for (const fk of fks) {
+        try {
+          await this.doExecuteRun(
+            `ALTER TABLE ${this.quoteIdentifier(fk.tableName as string)} DROP CONSTRAINT ${this.quoteIdentifier(fk.fkName as string)}`, []
+          );
+        } catch { /* ignore */ }
+      }
+      // 2. Drop all user tables
+      const rows = await this.doExecuteQuery<Record<string, unknown>>(this.getTableListQuery(), []);
+      for (const row of rows) {
+        const name = (row.name || Object.values(row)[0]) as string;
+        if (name) {
+          try {
+            await this.doExecuteRun(`DROP TABLE ${this.quoteIdentifier(name)}`, []);
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { /* ignore */ }
   }
 
   protected getDialectLabel(): string { return 'MSSQL'; }

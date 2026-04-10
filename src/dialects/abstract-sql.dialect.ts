@@ -341,11 +341,13 @@ export abstract class AbstractSqlDialect implements IDialect {
           result[key] = [];
           continue;
         }
+        // O2M: no column on parent table — populated via query on child table
         if (relDef.type === 'one-to-many') {
-          result[key] = parseJsonSafe(val as string, []);
-        } else {
-          result[key] = val;
+          result[key] = [];
+          continue;
         }
+        // M2O / O2O: FK value
+        result[key] = val;
       } else if (key === 'createdAt' || key === 'updatedAt') {
         result[key] = val;
       } else {
@@ -600,19 +602,15 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     for (const [name, rel] of Object.entries(schema.relations || {})) {
       if (rel.type === 'many-to-many') continue;
+      // O2M: FK lives on the child table, nothing to insert on parent
+      if (rel.type === 'one-to-many') continue;
+      // M2O / O2O: FK column on this table
       if (name in data) {
-        columns.push(name);
+        const colName = rel.joinColumn || name;
+        columns.push(colName);
         placeholders.push(this.nextPlaceholder());
-        if (rel.type === 'one-to-many') {
-          values.push(JSON.stringify(data[name] ?? []));
-        } else {
-          // Empty string → null for FK columns (avoids FOREIGN KEY constraint failures)
-          values.push(data[name] || null);
-        }
-      } else if (rel.type === 'one-to-many') {
-        columns.push(name);
-        placeholders.push(this.nextPlaceholder());
-        values.push('[]');
+        // Empty string → null for FK columns (avoids FOREIGN KEY constraint failures)
+        values.push(data[name] || null);
       }
     }
 
@@ -661,13 +659,13 @@ export abstract class AbstractSqlDialect implements IDialect {
         values.push(this.serializeValue(val, field));
       } else if (rel) {
         if (rel.type === 'many-to-many') continue;
-        setClauses.push(`${this.quoteIdentifier(key)} = ${this.nextPlaceholder()}`);
-        if (rel.type === 'one-to-many') {
-          values.push(JSON.stringify(val ?? []));
-        } else {
-          // Empty string → null for FK columns (avoids FOREIGN KEY constraint failures)
-          values.push(val || null);
-        }
+        // O2M: FK lives on child table, nothing to update on parent
+        if (rel.type === 'one-to-many') continue;
+        // M2O / O2O: FK column on this table
+        const colName = rel.joinColumn || key;
+        setClauses.push(`${this.quoteIdentifier(colName)} = ${this.nextPlaceholder()}`);
+        // Empty string → null for FK columns (avoids FOREIGN KEY constraint failures)
+        values.push(val || null);
       } else if (key === 'createdAt' || key === 'updatedAt') {
         setClauses.push(`${this.quoteIdentifier(key)} = ${this.nextPlaceholder()}`);
         values.push(this.serializeDate(val));
@@ -706,13 +704,12 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     for (const [name, rel] of Object.entries(schema.relations || {})) {
       if (rel.type === 'many-to-many') continue;
-      if (rel.type === 'one-to-many') {
-        cols.push(`  ${q(name)} ${this.fieldToSqlType({ type: 'json' })} DEFAULT '[]'`);
-      } else {
-        let colDef = `  ${q(name)} ${this.getIdColumnType()}`;
-        if (rel.required) colDef += ' NOT NULL';
-        cols.push(colDef);
-      }
+      // O2M: no column on parent — FK lives on the child table (mappedBy)
+      if (rel.type === 'one-to-many') continue;
+      // M2O / O2O: FK column on this table
+      let colDef = `  ${q(rel.joinColumn || name)} ${this.getIdColumnType()}`;
+      if (rel.required) colDef += ' NOT NULL';
+      cols.push(colDef);
     }
 
     if (schema.timestamps) {
@@ -909,6 +906,58 @@ export abstract class AbstractSqlDialect implements IDialect {
         }
       }
     }
+
+    // Add FOREIGN KEY constraints (after all tables exist)
+    await this.generateForeignKeys(schemas);
+  }
+
+  /** Generate FK constraints for M2O/O2O relations and junction tables */
+  protected async generateForeignKeys(schemas: EntitySchema[]): Promise<void> {
+    const q = (n: string) => this.quoteIdentifier(n);
+
+    for (const schema of schemas) {
+      for (const [name, rel] of Object.entries(schema.relations || {})) {
+        if (rel.type === 'many-to-one' || rel.type === 'one-to-one') {
+          const targetSchema = schemas.find(s => s.name === rel.target);
+          if (!targetSchema) continue;
+          const colName = rel.joinColumn || name;
+          const onDel = rel.onDelete || (rel.nullable !== false ? 'set-null' : 'restrict');
+          const onDelSql = onDel.toUpperCase().replace('-', ' ');
+          const fkName = `fk_${schema.collection}_${colName}`;
+          const sql = `ALTER TABLE ${q(schema.collection)} ADD CONSTRAINT ${q(fkName)} ` +
+            `FOREIGN KEY (${q(colName)}) REFERENCES ${q(targetSchema.collection)}(${q('id')}) ` +
+            `ON DELETE ${onDelSql}`;
+          try {
+            await this.executeRun(sql, []);
+            this.log('FK', fkName, sql);
+          } catch {
+            // FK may already exist (strategy=update) or dialect may not support it
+          }
+        }
+
+        if (rel.type === 'many-to-many' && rel.through) {
+          const targetSchema = schemas.find(s => s.name === rel.target);
+          if (!targetSchema) continue;
+          const sourceKey = `${schema.name.toLowerCase()}Id`;
+          const targetKey = `${rel.target.toLowerCase()}Id`;
+          const fkSource = `fk_${rel.through}_${sourceKey}`;
+          const fkTarget = `fk_${rel.through}_${targetKey}`;
+          try {
+            await this.executeRun(
+              `ALTER TABLE ${q(rel.through)} ADD CONSTRAINT ${q(fkSource)} ` +
+              `FOREIGN KEY (${q(sourceKey)}) REFERENCES ${q(schema.collection)}(${q('id')}) ON DELETE CASCADE`, []
+            );
+            await this.executeRun(
+              `ALTER TABLE ${q(rel.through)} ADD CONSTRAINT ${q(fkTarget)} ` +
+              `FOREIGN KEY (${q(targetKey)}) REFERENCES ${q(targetSchema.collection)}(${q('id')}) ON DELETE CASCADE`, []
+            );
+            this.log('FK_JUNCTION', rel.through, `${fkSource}, ${fkTarget}`);
+          } catch {
+            // FK may already exist
+          }
+        }
+      }
+    }
   }
 
   // ============================================================
@@ -949,7 +998,15 @@ export abstract class AbstractSqlDialect implements IDialect {
     this.log('FIND_BY_ID', schema.collection, { id });
 
     const rows = await this.executeQuery<Record<string, unknown>>(sql, where.params);
-    return rows.length > 0 ? this.deserializeRow(rows[0], schema) as T : null;
+    if (rows.length === 0) return null;
+    const result = this.deserializeRow(rows[0], schema);
+
+    // Auto-populate eager relations (Hibernate FetchType.EAGER)
+    const eagerRels = this.getEagerRelations(schema);
+    if (eagerRels.length > 0) {
+      return this.populateRelations(result, schema, eagerRels) as Promise<T>;
+    }
+    return result as T;
   }
 
   async create<T>(schema: EntitySchema, data: Record<string, unknown>): Promise<T> {
@@ -1008,32 +1065,51 @@ export abstract class AbstractSqlDialect implements IDialect {
       await this.executeRun(sql, values);
     }
 
-    // Replace junction table rows for many-to-many
+    // Diff-based M2M update (Set semantics — like Hibernate PersistentSet)
+    // Instead of DELETE-ALL + re-INSERT, compute delta: toAdd/toRemove
     for (const [relName, rel] of Object.entries(schema.relations || {})) {
       if (rel.type === 'many-to-many' && rel.through && relName in data) {
         const sourceKey = `${schema.name.toLowerCase()}Id`;
         const targetKey = `${rel.target.toLowerCase()}Id`;
+        const q = (n: string) => this.quoteIdentifier(n);
+
+        // 1. Fetch existing junction rows
         this.resetParams();
-        const delPh = this.nextPlaceholder();
-        await this.executeRun(
-          `DELETE FROM ${this.quoteIdentifier(rel.through)} WHERE ${this.quoteIdentifier(sourceKey)} = ${delPh}`,
-          [id]
+        const selPh = this.nextPlaceholder();
+        const existingRows = await this.executeQuery<Record<string, unknown>>(
+          `SELECT ${q(targetKey)} FROM ${q(rel.through)} WHERE ${q(sourceKey)} = ${selPh}`, [id]
         );
-        // Normalize: accept array, CSV string, or single ID
+        const oldIds = new Set(existingRows.map(r => String(r[targetKey] || r[targetKey.toLowerCase()] || r[targetKey.toUpperCase()])));
+
+        // 2. Normalize new IDs
         let relIds = data[relName];
-        if (relIds != null) {
-          if (!Array.isArray(relIds)) {
-            relIds = typeof relIds === 'string' ? (relIds as string).split(',').map(s => s.trim()).filter(Boolean) : [relIds];
-          }
-          for (const targetId of relIds as unknown[]) {
-            this.resetParams();
-            const p1 = this.nextPlaceholder();
-            const p2 = this.nextPlaceholder();
-            await this.executeRun(
-              `INSERT INTO ${this.quoteIdentifier(rel.through)} (${this.quoteIdentifier(sourceKey)}, ${this.quoteIdentifier(targetKey)}) VALUES (${p1}, ${p2})`,
-              [id, targetId]
-            );
-          }
+        if (relIds != null && !Array.isArray(relIds)) {
+          relIds = typeof relIds === 'string' ? (relIds as string).split(',').map(s => s.trim()).filter(Boolean) : [relIds];
+        }
+        const newIds = new Set((relIds as unknown[] || []).map(String));
+
+        // 3. Compute diff
+        const toAdd = [...newIds].filter(x => !oldIds.has(x));
+        const toRemove = [...oldIds].filter(x => !newIds.has(x));
+
+        // 4. Targeted INSERT/DELETE — O(delta) instead of O(n)
+        for (const targetId of toAdd) {
+          this.resetParams();
+          const p1 = this.nextPlaceholder();
+          const p2 = this.nextPlaceholder();
+          await this.executeRun(
+            `INSERT INTO ${q(rel.through)} (${q(sourceKey)}, ${q(targetKey)}) VALUES (${p1}, ${p2})`,
+            [id, targetId]
+          );
+        }
+        for (const targetId of toRemove) {
+          this.resetParams();
+          const p1 = this.nextPlaceholder();
+          const p2 = this.nextPlaceholder();
+          await this.executeRun(
+            `DELETE FROM ${q(rel.through)} WHERE ${q(sourceKey)} = ${p1} AND ${q(targetKey)} = ${p2}`,
+            [id, targetId]
+          );
         }
       }
     }
@@ -1071,6 +1147,19 @@ export abstract class AbstractSqlDialect implements IDialect {
       return result.changes > 0;
     }
 
+    // Cleanup M2M junction tables before hard delete
+    for (const [, rel] of Object.entries(schema.relations || {})) {
+      if (rel.type === 'many-to-many' && rel.through) {
+        this.resetParams();
+        const sourceKey = `${schema.name.toLowerCase()}Id`;
+        const ph = this.nextPlaceholder();
+        await this.executeRun(
+          `DELETE FROM ${this.quoteIdentifier(rel.through)} WHERE ${this.quoteIdentifier(sourceKey)} = ${ph}`,
+          [id]
+        );
+      }
+    }
+
     this.resetParams();
     const table = this.quoteIdentifier(schema.collection);
     const effectiveFilter = this.applyDiscriminator({ id }, schema);
@@ -1099,9 +1188,38 @@ export abstract class AbstractSqlDialect implements IDialect {
     }
 
     const where = this.translateFilter(effectiveFilter, schema);
-    const sql = `DELETE FROM ${table} WHERE ${where.sql}`;
-    this.log('DELETE_MANY', schema.collection, { sql, params: where.params });
-    const result = await this.executeRun(sql, where.params);
+
+    // Cleanup M2M junction tables before hard delete
+    const m2mRels = Object.entries(schema.relations || {}).filter(
+      ([, rel]) => rel.type === 'many-to-many' && rel.through
+    );
+    if (m2mRels.length > 0) {
+      // Fetch IDs that will be deleted
+      this.resetParams();
+      const selWhere = this.translateFilter(effectiveFilter, schema);
+      const selSql = `SELECT ${this.quoteIdentifier('id')} FROM ${table} WHERE ${selWhere.sql}`;
+      const rows = await this.executeQuery(selSql, selWhere.params);
+      const ids = (rows as Record<string, unknown>[]).map(r => r.id as string).filter(Boolean);
+      if (ids.length > 0) {
+        for (const [, rel] of m2mRels) {
+          const sourceKey = `${schema.name.toLowerCase()}Id`;
+          for (const entityId of ids) {
+            this.resetParams();
+            const ph = this.nextPlaceholder();
+            await this.executeRun(
+              `DELETE FROM ${this.quoteIdentifier(rel.through!)} WHERE ${this.quoteIdentifier(sourceKey)} = ${ph}`,
+              [entityId]
+            );
+          }
+        }
+      }
+    }
+
+    this.resetParams();
+    const delWhere = this.translateFilter(effectiveFilter, schema);
+    const sql = `DELETE FROM ${table} WHERE ${delWhere.sql}`;
+    this.log('DELETE_MANY', schema.collection, { sql, params: delWhere.params });
+    const result = await this.executeRun(sql, delWhere.params);
     return result.changes;
   }
 
@@ -1211,8 +1329,19 @@ export abstract class AbstractSqlDialect implements IDialect {
     return this.executeQuery<T>(sql, whereParams);
   }
 
+  /** Get relations that should be eagerly loaded (fetch: 'eager' or default eager for M2O/O2O) */
+  protected getEagerRelations(schema: EntitySchema): string[] {
+    const eager: string[] = [];
+    for (const [name, rel] of Object.entries(schema.relations || {})) {
+      const fetchType = rel.fetch
+        || ((rel.type === 'many-to-one' || rel.type === 'one-to-one') ? 'eager' : 'lazy');
+      if (fetchType === 'eager') eager.push(name);
+    }
+    return eager;
+  }
+
   // ============================================================
-  // IDialect Implementation — Relations (N+1 strategy)
+  // IDialect Implementation — Relations
   // ============================================================
 
   async findWithRelations<T>(
@@ -1270,28 +1399,28 @@ export abstract class AbstractSqlDialect implements IDialect {
           [result.id]
         );
 
-        const populated: Record<string, unknown>[] = [];
-        for (const jr of junctionRows) {
-          // Oracle returns column names in UPPERCASE — do case-insensitive lookup
-          const targetId = jr[targetKey] || jr[targetKey.toUpperCase()] || jr[targetKey.toLowerCase()];
-          if (targetId) {
-            const related = await this.findById<Record<string, unknown>>(targetSchema, String(targetId), selectOpts);
-            if (related) populated.push(related);
-          }
-        }
-        result[relName] = populated;
-      } else if (relDef.type === 'one-to-many') {
-        const ids = result[relName];
-        if (Array.isArray(ids) && ids.length > 0) {
-          const populated: Record<string, unknown>[] = [];
-          for (const refId of ids) {
-            const related = await this.findById<Record<string, unknown>>(targetSchema, String(refId), selectOpts);
-            if (related) populated.push(related);
-          }
-          result[relName] = populated;
+        // Batch load: single query with IN clause instead of N findById (N+1 → 1)
+        const targetIds = junctionRows
+          .map(jr => jr[targetKey] || jr[targetKey.toUpperCase()] || jr[targetKey.toLowerCase()])
+          .filter(Boolean)
+          .map(String);
+        if (targetIds.length > 0) {
+          const related = await this.find<Record<string, unknown>>(
+            targetSchema, { id: { $in: targetIds } }, selectOpts
+          );
+          // Preserve junction order
+          const byId = new Map(related.map(r => [String(r.id), r]));
+          result[relName] = targetIds.map(tid => byId.get(tid)).filter(Boolean);
         } else {
           result[relName] = [];
         }
+      } else if (relDef.type === 'one-to-many') {
+        // O2M: query child table by FK (mappedBy or convention parentNameId)
+        const fkColumn = relDef.mappedBy || `${schema.name.toLowerCase()}Id`;
+        const children = await this.find<Record<string, unknown>>(
+          targetSchema, { [fkColumn]: result.id }, selectOpts
+        );
+        result[relName] = children;
       } else {
         const refId = result[relName];
         if (refId) {

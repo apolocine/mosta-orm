@@ -77,7 +77,7 @@ class MariaDBDialect extends MySQLDialect {
     try {
       const url = new URL(uri.replace(/^mariadb:/, 'http:').replace(/^mysql:/, 'http:'));
       return {
-        host: url.hostname || 'localhost',
+        host: (url.hostname || 'localhost').replace(/^\[|\]$/g, ''),
         port: url.port ? parseInt(url.port) : 3306,
         user: url.username || undefined,
         password: url.password || undefined,
