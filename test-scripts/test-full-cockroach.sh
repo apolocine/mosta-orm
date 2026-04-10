@@ -7,4 +7,4 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$(cd "$SCRIPT_DIR/.." && pwd)"
 CRDB_URI="${CRDB_URI:-postgresql://devuser:devpass26@localhost:26257/test_full_orm?sslmode=disable}"
-bash tests-scripts/test-full-dialect.sh cockroachdb "$CRDB_URI"
+bash test-scripts/test-full-dialect.sh cockroachdb "$CRDB_URI"

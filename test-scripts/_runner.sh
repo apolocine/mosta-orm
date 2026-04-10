@@ -23,11 +23,11 @@ run_test() {
   local dialect="$1"
   local uri="$2"
 
-  RESULT=$(DIALECT="$dialect" DB_URI="$uri" node tests-scripts/test-discriminator.mjs 2>/dev/null)
+  RESULT=$(DIALECT="$dialect" DB_URI="$uri" node test-scripts/test-discriminator.mjs 2>/dev/null)
 
   if [ -z "$RESULT" ]; then
     echo -e "  ${RED}✗ Test script failed to execute. Errors:${NC}"
-    DIALECT="$dialect" DB_URI="$uri" node tests-scripts/test-discriminator.mjs 2>&1 | head -30
+    DIALECT="$dialect" DB_URI="$uri" node test-scripts/test-discriminator.mjs 2>&1 | head -30
     exit 1
   fi
 

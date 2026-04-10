@@ -7,4 +7,4 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$(cd "$SCRIPT_DIR/.." && pwd)"
 ORACLE_URI="${ORACLE_URI:-oracle://devuser:devpass26@localhost:1521/XEPDB1}"
-bash tests-scripts/test-full-dialect.sh oracle "$ORACLE_URI"
+bash test-scripts/test-full-dialect.sh oracle "$ORACLE_URI"

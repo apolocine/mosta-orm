@@ -40,11 +40,11 @@ echo -e "${CYAN}  Test complet IDialect — ${DB_UPPER}${NC}"
 echo -e "${CYAN}════════════════════════════════════════════════════════${NC}\n"
 
 cd "$ORM_DIR"
-RESULT=$(DIALECT="$DB" DB_URI="$URI" node tests-scripts/test-full-dialect.mjs 2>/dev/null)
+RESULT=$(DIALECT="$DB" DB_URI="$URI" node test-scripts/test-full-dialect.mjs 2>/dev/null)
 
 if [ -z "$RESULT" ]; then
   echo -e "  ${RED}✗ Script failed. Errors:${NC}"
-  DIALECT="$DB" DB_URI="$URI" node tests-scripts/test-full-dialect.mjs 2>&1 | head -40
+  DIALECT="$DB" DB_URI="$URI" node test-scripts/test-full-dialect.mjs 2>&1 | head -40
   exit 1
 fi
 

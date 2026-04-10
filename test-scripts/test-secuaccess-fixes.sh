@@ -25,11 +25,11 @@ echo -e "${CYAN}  Test SecuAccessPro SQL Fixes (B, C, D) — PostgreSQL${NC}"
 echo -e "${CYAN}════════════════════════════════════════════════════════${NC}\n"
 
 cd "$ORM_DIR"
-RESULT=$(PG_URI="$PG_URI" node tests-scripts/test-secuaccess-fixes.mjs 2>/dev/null)
+RESULT=$(PG_URI="$PG_URI" node test-scripts/test-secuaccess-fixes.mjs 2>/dev/null)
 
 if [ -z "$RESULT" ]; then
   echo -e "  ${RED}✗ Test script failed. Errors:${NC}"
-  PG_URI="$PG_URI" node tests-scripts/test-secuaccess-fixes.mjs 2>&1 | head -40
+  PG_URI="$PG_URI" node test-scripts/test-secuaccess-fixes.mjs 2>&1 | head -40
   exit 1
 fi
 

@@ -19,11 +19,11 @@ echo -e "${CYAN}  Test P0-2 : M2M Delete Junction Cleanup — PostgreSQL${NC}"
 echo -e "${CYAN}════════════════════════════════════════════════════════${NC}\n"
 
 cd "$ORM_DIR"
-RESULT=$(DIALECT=postgres DB_URI="$PG_URI" node tests-scripts/test-m2m-delete.mjs 2>/dev/null)
+RESULT=$(DIALECT=postgres DB_URI="$PG_URI" node test-scripts/test-m2m-delete.mjs 2>/dev/null)
 
 if [ -z "$RESULT" ]; then
   echo -e "  ${RED}✗ Script failed. Errors:${NC}"
-  DIALECT=postgres DB_URI="$PG_URI" node tests-scripts/test-m2m-delete.mjs 2>&1 | head -30
+  DIALECT=postgres DB_URI="$PG_URI" node test-scripts/test-m2m-delete.mjs 2>&1 | head -30
   exit 1
 fi
 

@@ -20,11 +20,11 @@ echo -e "${CYAN}  Test P0-2 : M2M Delete Junction Cleanup — CockroachDB${NC}"
 echo -e "${CYAN}════════════════════════════════════════════════════════${NC}\n"
 
 cd "$ORM_DIR"
-RESULT=$(DIALECT=cockroachdb DB_URI="$CRDB_URI" node tests-scripts/test-m2m-delete.mjs 2>/dev/null)
+RESULT=$(DIALECT=cockroachdb DB_URI="$CRDB_URI" node test-scripts/test-m2m-delete.mjs 2>/dev/null)
 
 if [ -z "$RESULT" ]; then
   echo -e "  ${RED}✗ Script failed. Errors:${NC}"
-  DIALECT=cockroachdb DB_URI="$CRDB_URI" node tests-scripts/test-m2m-delete.mjs 2>&1 | head -30
+  DIALECT=cockroachdb DB_URI="$CRDB_URI" node test-scripts/test-m2m-delete.mjs 2>&1 | head -30
   exit 1
 fi
 

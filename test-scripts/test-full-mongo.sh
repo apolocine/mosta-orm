@@ -6,4 +6,4 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$(cd "$SCRIPT_DIR/.." && pwd)"
 MONGO_URI="${MONGO_URI:-mongodb://localhost:27017/test_full_orm}"
-bash tests-scripts/test-full-dialect.sh mongodb "$MONGO_URI"
+bash test-scripts/test-full-dialect.sh mongodb "$MONGO_URI"

@@ -13,10 +13,10 @@ run_seed_test() {
   local dialect="$1"
   local uri="$2"
   header "Seeding — $dialect"
-  RESULT=$(DIALECT="$dialect" DB_URI="$uri" node tests-scripts/test-seeding-multidialect.mjs 2>/dev/null)
+  RESULT=$(DIALECT="$dialect" DB_URI="$uri" node test-scripts/test-seeding-multidialect.mjs 2>/dev/null)
   if [ -z "$RESULT" ]; then
     echo -e "  ${RED}✗ Test failed. Errors:${NC}"
-    DIALECT="$dialect" DB_URI="$uri" node tests-scripts/test-seeding-multidialect.mjs 2>&1 | head -30
+    DIALECT="$dialect" DB_URI="$uri" node test-scripts/test-seeding-multidialect.mjs 2>&1 | head -30
     FAIL=$((FAIL+1))
     return
   fi
