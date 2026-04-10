@@ -480,32 +480,155 @@ const products = await productRepo.findWithRelations(
 
 ```typescript
 relations: {
-  // Un produit appartient à une catégorie
+  // Many-to-One : un produit appartient à une catégorie
+  // FK stockée sur la table 'products' (colonne 'category')
+  // Eager par défaut — auto-chargé dans findById()
   category: {
     type: 'many-to-one',
     target: 'Category',
     required: true,
+    onDelete: 'restrict',        // empêche la suppression de la catégorie si des produits y réfèrent
   },
 
-  // Un produit a plusieurs avis
+  // One-to-Many : un produit a plusieurs avis
+  // PAS de colonne sur la table 'products' — FK sur la table 'reviews' (colonne 'productId')
+  // Lazy par défaut — chargé uniquement avec findByIdWithRelations()
   reviews: {
     type: 'one-to-many',
     target: 'Review',
+    mappedBy: 'product',         // nom de la FK sur la table enfant Review
   },
 
-  // Relation many-to-many via table de jonction
+  // Many-to-Many : tags via table de jonction
+  // Table 'product_tags' créée automatiquement avec FK CASCADE
+  // Lazy par défaut
   tags: {
     type: 'many-to-many',
     target: 'Tag',
-    through: 'product_tags',  // nom de la table de jonction (SQL)
+    through: 'product_tags',
+    // cascade: ['persist', 'merge'],  // JAMAIS 'remove' sur M2M !
   },
 
-  // Un produit a un seul profil technique
+  // One-to-One : un produit a un seul profil technique
+  // Eager par défaut
   specs: {
     type: 'one-to-one',
     target: 'ProductSpec',
     nullable: true,
+    onDelete: 'set-null',
   },
+}
+```
+
+### DDL généré automatiquement
+
+L'ORM génère le DDL complet lors de `initSchema()` :
+
+```sql
+-- Table principale (M2O: colonne FK 'category')
+CREATE TABLE IF NOT EXISTS "products" (
+  "id" TEXT PRIMARY KEY,
+  "title" TEXT NOT NULL,
+  "price" REAL DEFAULT 0,
+  "category" TEXT,                -- FK vers categories.id
+  "specs" TEXT,                   -- FK vers product_specs.id
+  "createdAt" TEXT,
+  "updatedAt" TEXT
+);
+-- PAS de colonne 'reviews' (O2M: FK sur la table enfant)
+-- PAS de colonne 'tags' (M2M: table de jonction)
+
+-- Table de jonction (M2M: product ↔ tag)
+CREATE TABLE IF NOT EXISTS "product_tags" (
+  "productId" TEXT NOT NULL,
+  "tagId" TEXT NOT NULL,
+  PRIMARY KEY ("productId", "tagId")
+);
+
+-- Foreign Keys (générées automatiquement)
+ALTER TABLE "products" ADD CONSTRAINT "fk_products_category"
+  FOREIGN KEY ("category") REFERENCES "categories"("id") ON DELETE RESTRICT;
+ALTER TABLE "product_tags" ADD CONSTRAINT "fk_product_tags_productId"
+  FOREIGN KEY ("productId") REFERENCES "products"("id") ON DELETE CASCADE;
+ALTER TABLE "product_tags" ADD CONSTRAINT "fk_product_tags_tagId"
+  FOREIGN KEY ("tagId") REFERENCES "tags"("id") ON DELETE CASCADE;
+```
+
+### O2M : la FK vit sur la table enfant
+
+```typescript
+// Review.schema.ts — la table enfant possède la FK
+export const ReviewSchema: EntitySchema = {
+  name: 'Review',
+  collection: 'reviews',
+  fields: {
+    text: { type: 'string', required: true },
+    rating: { type: 'number', required: true },
+  },
+  relations: {
+    // FK vers Product — c'est cette colonne qui lie les reviews au produit
+    product: { type: 'many-to-one', target: 'Product' },
+  },
+  indexes: [],
+  timestamps: true,
+}
+```
+
+```sql
+-- Table reviews avec FK vers products
+CREATE TABLE IF NOT EXISTS "reviews" (
+  "id" TEXT PRIMARY KEY,
+  "text" TEXT NOT NULL,
+  "rating" REAL NOT NULL,
+  "product" TEXT,                  -- FK vers products.id
+  "createdAt" TEXT, "updatedAt" TEXT
+);
+ALTER TABLE "reviews" ADD CONSTRAINT "fk_reviews_product"
+  FOREIGN KEY ("product") REFERENCES "products"("id") ON DELETE SET NULL;
+```
+
+### M2M : create avec des relations
+
+```typescript
+// Créer un produit avec des tags (M2M)
+const product = await productRepo.create({
+  title: 'Laptop',
+  price: 999,
+  category: categoryId,          // M2O: stocke l'ID directement
+  tags: [tag1Id, tag2Id],        // M2M: insère dans la junction 'product_tags'
+})
+// L'ORM insère AUTOMATIQUEMENT dans product_tags :
+//   INSERT INTO product_tags (productId, tagId) VALUES (newId, tag1Id)
+//   INSERT INTO product_tags (productId, tagId) VALUES (newId, tag2Id)
+
+// Mettre à jour les tags (diff-based, pas DELETE-ALL + re-INSERT)
+await productRepo.update(product.id, {
+  tags: [tag1Id, tag3Id],        // ajoute tag3, retire tag2 (Set semantics)
+})
+
+// Supprimer un produit → nettoie automatiquement la junction
+await productRepo.delete(product.id)
+// DELETE FROM product_tags WHERE productId = ?
+// DELETE FROM products WHERE id = ?
+```
+
+### Fetch strategy (eager/lazy)
+
+```typescript
+// findById auto-charge les relations eager (M2O, O2O)
+const product = await productRepo.findById('abc123')
+// product.category = { id: '...', name: 'Electronics' }  ← eager (auto)
+// product.reviews = undefined                              ← lazy (pas chargé)
+// product.tags = undefined                                 ← lazy (pas chargé)
+
+// Chargement explicite des relations lazy
+const full = await productRepo.findByIdWithRelations('abc123', ['reviews', 'tags'])
+// full.reviews = [{ id: '...', text: 'Great!', rating: 5 }, ...]
+// full.tags = [{ id: '...', label: 'sale' }, ...]
+
+// Override: forcer eager sur une relation lazy
+relations: {
+  tags: { type: 'many-to-many', target: 'Tag', through: 'product_tags', fetch: 'eager' },
 }
 ```
 

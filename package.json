@@ -1,9 +1,9 @@
 {
   "name": "@mostajs/orm",
-  "version": "1.7.7",
+  "version": "1.9.0",
   "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -70,13 +70,8 @@
     "@mostajs/socle": ">=2.0.0",
     "@sap/hana-client": ">=2.0.0",
     "better-sqlite3": ">=9.0.0",
-    "ibm_db": ">=3.0.0",
-    "mariadb": ">=3.0.0",
     "mongoose": ">=7.0.0",
-    "mssql": ">=10.0.0",
-    "mysql2": ">=3.0.0",
-    "oracledb": ">=6.0.0",
-    "pg": ">=8.0.0"
+    "mysql2": ">=3.0.0"
   },
   "peerDependenciesMeta": {
     "mongoose": {
@@ -117,5 +112,12 @@
     "better-sqlite3": "^12.6.2",
     "mongoose": "^8.0.0",
     "typescript": "^5.6.0"
+  },
+  "optionalDependencies": {
+    "ibm_db": "^4.0.0",
+    "mariadb": "^3.5.2",
+    "mssql": "^12.2.1",
+    "oracledb": "^6.10.0",
+    "pg": "^8.20.0"
   }
 }

@@ -458,3 +458,68 @@ export async function createDatabase(
     return { ok: false, error: err.message };
   }
 }
+
+// ============================================================
+// Named Connection Registry
+// ============================================================
+//
+// Stores dialect instances by name in a module-level Map.
+// Since @mostajs/orm is a serverExternalPackage (NOT bundled by webpack),
+// this Map is shared across ALL server chunks in the same Node.js process.
+//
+// LIFECYCLE:
+//   Server starts → Map empty
+//   First request → createConnection() + registerNamedConnection('portal', dialect)
+//   Subsequent requests → getNamedConnection('portal') → same dialect ✅
+//   Server restarts → Map empty → reconnects on first request
+//
+// USAGE (Next.js):
+//   import { createConnection, registerNamedConnection, getNamedConnection } from '@mostajs/orm'
+//   export async function getDialect() {
+//     const cached = getNamedConnection('portal')
+//     if (cached) return cached
+//     const dialect = await createConnection(config, schemas)
+//     registerNamedConnection('portal', dialect)
+//     return dialect
+//   }
+// ============================================================
+
+/** Named connections registry — shared across all consumers of this module */
+const _namedConnections = new Map<string, IDialect>();
+
+/**
+ * Register a named connection for later retrieval.
+ * @param name    - Unique name (e.g., 'portal', 'analytics', 'tenant-42')
+ * @param dialect - Connected dialect instance
+ */
+export function registerNamedConnection(name: string, dialect: IDialect): void {
+  _namedConnections.set(name, dialect);
+}
+
+/**
+ * Retrieve a previously registered named connection.
+ * Returns null if not found. Does NOT create a new connection.
+ * @param name - Connection name
+ */
+export function getNamedConnection(name: string): IDialect | null {
+  return _namedConnections.get(name) ?? null;
+}
+
+/**
+ * Remove a named connection from the registry.
+ * Does NOT disconnect — call dialect.disconnect() separately.
+ * @param name - Connection name to remove
+ */
+export function removeNamedConnection(name: string): void {
+  _namedConnections.delete(name);
+}
+
+/** List all registered connection names. */
+export function listNamedConnections(): string[] {
+  return Array.from(_namedConnections.keys());
+}
+
+/** Remove all named connections (for testing or shutdown). */
+export function clearNamedConnections(): void {
+  _namedConnections.clear();
+}

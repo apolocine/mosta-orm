@@ -10,6 +10,9 @@ export type {
   EmbeddedSchemaDef,
   RelationType,
   RelationDef,
+  CascadeType,
+  FetchType,
+  OnDeleteAction,
   IndexType,
   IndexDef,
   EntitySchema,
@@ -73,6 +76,12 @@ export {
   createIsolatedDialect,
   createDatabase,
   dropDatabase,
+  // Named Connection Registry (for Next.js / webpack chunk sharing)
+  registerNamedConnection,
+  getNamedConnection,
+  removeNamedConnection,
+  listNamedConnections,
+  clearNamedConnections,
 } from './core/factory.js';
 
 // ============================================================

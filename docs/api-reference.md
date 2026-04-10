@@ -642,6 +642,10 @@ interface FieldDef {
 ### RelationDef
 
 ```typescript
+type CascadeType = 'persist' | 'merge' | 'remove' | 'all'
+type FetchType = 'lazy' | 'eager'
+type OnDeleteAction = 'cascade' | 'set-null' | 'restrict' | 'no-action'
+
 interface RelationDef {
   /** Nom de l'entité cible (doit être enregistrée dans le registry) */
   target: string
@@ -660,8 +664,45 @@ interface RelationDef {
 
   /** Nom de la table de jonction (many-to-many SQL uniquement) */
   through?: string
+
+  // --- Options Hibernate-inspired (v1.8.0) ---
+
+  /** Opérations cascade à propager. JAMAIS 'remove'/'all' sur M2M ! */
+  cascade?: CascadeType[]
+
+  /** Supprimer les orphelins (O2O et O2M uniquement, pas M2M) */
+  orphanRemoval?: boolean
+
+  /** Stratégie de chargement. Defaults: M2O/O2O=eager, O2M/M2M=lazy */
+  fetch?: FetchType
+
+  /** Champ FK inverse sur la table enfant (O2M bidirectionnel) */
+  mappedBy?: string
+
+  /** Nom explicite de la colonne FK (default: nom du champ relation) */
+  joinColumn?: string
+
+  /** Colonne FK inverse dans la junction table (M2M) */
+  inverseJoinColumn?: string
+
+  /** Action ON DELETE. Default: nullable ? 'set-null' : 'restrict' */
+  onDelete?: OnDeleteAction
 }
 ```
+
+**Defaults de fetch** (comme Hibernate) :
+
+| Type | Default | Raison |
+|------|---------|--------|
+| `many-to-one` | `eager` | Un seul objet, coût faible |
+| `one-to-one` | `eager` | Un seul objet, coût faible |
+| `one-to-many` | `lazy` | Collection potentiellement grande |
+| `many-to-many` | `lazy` | Collection potentiellement grande |
+
+**Règles** :
+- `cascade: ['remove']` ou `['all']` — **JAMAIS** sur many-to-many (supprimerait l'entité cible !)
+- `orphanRemoval` — non supporté sur many-to-many (comme Hibernate)
+- `mappedBy` requis pour O2M bidirectionnel (sans lui, O2M est unidirectionnel)
 
 ---
 

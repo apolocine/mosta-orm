@@ -196,11 +196,13 @@ class OracleDialect extends AbstractSqlDialect {
         const rows = result.rows ?? [];
         // oracledb rows may carry internal driver objects (ConnectDescription etc.)
         // with circular references — extract only own enumerable properties
+        // Oracle returns UPPERCASE column names — normalize to lowercase
+        // This is the Oracle normalizer: same principle as Mongo _id → id
         return rows.map(row => {
           if (row && typeof row === 'object' && !Array.isArray(row)) {
             const clean: Record<string, unknown> = {};
             for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
-              clean[k] = v;
+              clean[k.toLowerCase()] = v;
             }
             return clean as T;
           }
@@ -312,29 +314,30 @@ class OracleDialect extends AbstractSqlDialect {
     this.log('COUNT', schema.collection, { sql, params: where.params });
     const rows = await this.executeQuery<Record<string, unknown>>(sql, where.params);
     if (rows.length === 0) return 0;
-    // Oracle returns uppercase column names: CNT or cnt depending on outFormat
+    // doExecuteQuery normalizes to lowercase
     const row = rows[0];
-    const val = row.CNT ?? row.cnt ?? row.COUNT ?? row['COUNT(*)'];
+    const val = row.cnt ?? row['count(*)'] ?? row.CNT ?? row.COUNT;
     return Number(val) || 0;
   }
 
-  // Oracle uppercase column mapping: normalize row keys to schema field names
+  // Oracle column mapping: doExecuteQuery normalizes to lowercase,
+  // but camelCase fields (createdAt, updatedAt) arrive as createdat, updatedat.
+  // Map lowercase → original camelCase schema field names.
   // IMPORTANT: only copy known fields — Oracle oracledb may attach internal
   // objects (ConnectDescription, etc.) with circular references to result rows
   protected deserializeRow(row: Record<string, unknown>, schema: import('../core/types.js').EntitySchema): Record<string, unknown> {
     if (!row) return row;
-    // Build map: UPPERCASE key → schema field name
-    const upperToField: Record<string, string> = { ID: 'id', CREATEDAT: 'createdAt', UPDATEDAT: 'updatedAt' };
+    // Build map: lowercase key → schema field name (camelCase)
+    const lowerToField: Record<string, string> = { id: 'id', createdat: 'createdAt', updatedat: 'updatedAt' };
     for (const fieldName of Object.keys(schema.fields || {})) {
-      upperToField[fieldName.toUpperCase()] = fieldName;
+      lowerToField[fieldName.toLowerCase()] = fieldName;
     }
     for (const [relName] of Object.entries(schema.relations || {})) {
-      upperToField[relName.toUpperCase()] = relName;
+      lowerToField[relName.toLowerCase()] = relName;
     }
     const normalized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(row)) {
-      const mapped = upperToField[key] ?? upperToField[key.toUpperCase()];
-      // Skip unknown keys — avoids circular Oracle driver internals
+      const mapped = lowerToField[key] ?? lowerToField[key.toLowerCase()];
       if (mapped) {
         normalized[mapped] = value;
       }
