@@ -96,7 +96,7 @@ class SpannerDialect extends AbstractSqlDialect {
     const q = (name: string) => this.quoteIdentifier(name);
     const cols: string[] = [`  ${q('id')} ${this.getIdColumnType()} NOT NULL`];
 
-    for (const [name, field] of Object.entries(schema.fields) as [string, FieldDef][]) {
+    for (const [name, field] of Object.entries(schema.fields || {}) as [string, FieldDef][]) {
       let colDef = `  ${q(name)} ${this.fieldToSqlType(field)}`;
       if (field.required) colDef += ' NOT NULL';
       // Spanner doesn't support UNIQUE in column definition — use unique index
@@ -104,7 +104,7 @@ class SpannerDialect extends AbstractSqlDialect {
       cols.push(colDef);
     }
 
-    for (const [name, rel] of Object.entries(schema.relations) as [string, RelationDef][]) {
+    for (const [name, rel] of Object.entries(schema.relations || {}) as [string, RelationDef][]) {
       if (rel.type === 'many-to-many') continue;
       if (rel.type === 'one-to-many') {
         cols.push(`  ${q(name)} ${this.fieldToSqlType({ type: 'json' })}`);
@@ -268,7 +268,7 @@ class SpannerDialect extends AbstractSqlDialect {
 
     // Junction tables
     for (const schema of schemas) {
-      for (const [, rel] of Object.entries(schema.relations) as [string, RelationDef][]) {
+      for (const [, rel] of Object.entries(schema.relations || {}) as [string, RelationDef][]) {
         if (rel.type === 'many-to-many' && rel.through) {
           const exists = await this.tableExists(rel.through);
           if (exists) continue;

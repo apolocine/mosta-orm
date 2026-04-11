@@ -1,0 +1,24 @@
+PGPASSWORD=devpass26 psql -h localhost -p 5432 -U devuser -d postgres -c   
+   "CREATE DATABASE testsetupdb;" 2>&1
+   
+   
+   
+    node -e "                                                                  
+   const { Client } = require('pg');
+   const c = new Client({ host:'localhost', port:5432, user:'devuser',
+   password:'devpass26', database:'postgres' });
+   c.connect().then(() => c.query('CREATE DATABASE testsetupdb')).then(() =>
+   { console.log('DB created'); return c.end(); }).catch(e => {
+   console.log(e.message); c.end(); });
+   " 2>&1
+
+
+
+   npx tsx orm-scripts-tests/test-postgres/03-test-setup-install.ts 2>&1        
+   Run setup install test again
+   
+   
+   
+   
+   npm view @mostajs/setup --json 2>&1 | head -30
+      npm view @mostajs/orm --json 2>&1 | head -30
