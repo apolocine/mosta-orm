@@ -5,3 +5,10 @@ dist/
 .env.local
 .next/
 out/
+docs/
+examples/
+jar_files/
+orm-scripts-tests/
+test-scripts/
+package-lock.json
+hjar/
