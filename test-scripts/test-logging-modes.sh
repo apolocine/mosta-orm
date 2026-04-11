@@ -17,6 +17,6 @@ cd "$ORM_DIR"
 DB_FILE=$(mktemp /tmp/test-logging-XXXXXX.db)
 trap "rm -f $DB_FILE ${DB_FILE}2 ${DB_FILE}3" EXIT
 
-node tests-scripts/test-logging-modes.mjs "$DB_FILE" 2>&1
+node test-scripts/test-logging-modes.mjs "$DB_FILE" 2>&1
 
 echo -e "\n${GREEN}✓ Logging modes test complete${NC}\n"

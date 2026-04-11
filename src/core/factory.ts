@@ -177,6 +177,68 @@ export async function createConnection(
 }
 
 // ============================================================
+// Isolated dialect — no singleton, no global registry
+// Used by @mostajs/mproject for multi-project support
+// ============================================================
+
+/**
+ * Create an isolated dialect instance — NOT stored as singleton.
+ * Each call returns a new, independent connection to the database.
+ * Schemas are initialized on this instance only, not in the global registry.
+ *
+ * Use this when you need multiple simultaneous database connections
+ * (e.g., multi-project / multi-tenant scenarios).
+ *
+ * Example:
+ *   const pgDialect = await createIsolatedDialect({
+ *     dialect: 'postgres',
+ *     uri: 'postgresql://user:pass@localhost:5432/mydb',
+ *   }, [UsersSchema, OrdersSchema]);
+ *
+ *   const oracleDialect = await createIsolatedDialect({
+ *     dialect: 'oracle',
+ *     uri: 'oracle://user:pass@localhost:1521/XE',
+ *   }, [UsersSchema]);
+ *
+ *   // Each dialect is independent — no shared state
+ */
+export async function createIsolatedDialect(
+  config: ConnectionConfig,
+  schemas?: EntitySchema[],
+): Promise<IDialect> {
+  const dialectCfg = getDialectConfig(config.dialect);
+
+  // Normalize schemas — ensure required fields exist to avoid null references
+  const safeSchemas = schemas?.map(s => ({
+    ...s,
+    fields: s.fields || {},
+    relations: s.relations || {},
+    indexes: s.indexes || [],
+  })) || [];
+
+  try {
+    const mod = await loadDialectModule(config.dialect);
+    const dialect = mod.createDialect();
+    await dialect.connect(config);
+
+    // Initialize schemas on this instance only (not in global registry)
+    if (safeSchemas.length > 0) {
+      await dialect.initSchema(safeSchemas);
+    }
+
+    return dialect;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('Cannot find module') || message.includes('MODULE_NOT_FOUND')) {
+      throw new Error(
+        `Dialect "${dialectCfg.label}" requires a driver. Install it:\n  ${dialectCfg.installHint}`
+      );
+    }
+    throw err;
+  }
+}
+
+// ============================================================
 // Database creation
 // ============================================================
 
@@ -220,6 +282,114 @@ function isAlreadyExistsError(dialect: DialectType, err: any): boolean {
     (dialect === 'mysql' && code === 'ER_DB_CREATE_EXISTS') ||
     (dialect === 'mssql' && msg.includes('already exists'))
   );
+}
+
+/** DDL to drop a database, per dialect family */
+function getDropDDL(dialect: DialectType, dbName: string): string {
+  switch (dialect) {
+    case 'mysql':
+    case 'mariadb':
+      return `DROP DATABASE IF EXISTS \`${dbName}\``;
+    case 'mssql':
+      return `IF EXISTS (SELECT * FROM sys.databases WHERE name='${dbName}') DROP DATABASE [${dbName}]`;
+    case 'postgres':
+    case 'cockroachdb':
+      return `DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`;
+    default:
+      return `DROP DATABASE "${dbName}"`;
+  }
+}
+
+/**
+ * Drop a database.
+ *
+ * - **mongodb**: drops the database (all collections deleted)
+ * - **sqlite**: deletes the file
+ * - **spanner**: not supported (use gcloud CLI)
+ * - **SQL dialects**: connects to the system DB, runs DROP DATABASE
+ *
+ * ⚠️ This is IRREVERSIBLE — all data in the database will be lost.
+ *
+ * @param dialect  - target dialect
+ * @param uri      - full connection URI to the TARGET database
+ * @param dbName   - name of the database to drop
+ */
+export async function dropDatabase(
+  dialect: DialectType,
+  uri: string,
+  dbName: string,
+): Promise<{ ok: boolean; detail?: string; error?: string }> {
+  if (dialect === 'sqlite') {
+    if (uri === ':memory:') return { ok: true, detail: 'SQLite :memory: — nothing to drop' };
+    try {
+      const { unlinkSync, existsSync } = await import('fs');
+      // SQLite WAL files
+      for (const suffix of ['', '-wal', '-shm', '-journal']) {
+        const f = uri + suffix;
+        if (existsSync(f)) unlinkSync(f);
+      }
+      return { ok: true, detail: `SQLite file "${uri}" deleted` };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+  }
+  if (dialect === 'mongodb') {
+    try {
+      const mod = await loadDialectModule(dialect);
+      const d = mod.createDialect();
+      await d.connect({ dialect, uri, schemaStrategy: 'none' });
+      // MongoDB dropDatabase is on the connection
+      await (d as any).dropDatabase?.();
+      await d.disconnect();
+      return { ok: true, detail: `MongoDB database dropped` };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+  }
+  if (dialect === 'oracle') {
+    return { ok: false, error: 'Oracle: drop user/schema via DBA, not via ORM' };
+  }
+  if (dialect === 'spanner') {
+    return { ok: false, error: 'Cloud Spanner: drop via gcloud CLI' };
+  }
+
+  // SQL dialects — connect to system DB, run DROP DATABASE
+  const systemDbName = SYSTEM_DB[dialect] || 'postgres';
+  const systemUri = uri.replace(
+    /\/([^/?]+)(\?|$)/,
+    `/${systemDbName}$2`,
+  );
+
+  try {
+    const mod = await loadDialectModule(dialect);
+    const d = mod.createDialect();
+    await d.connect({ dialect, uri: systemUri, schemaStrategy: 'none' });
+
+    // For PostgreSQL: terminate active connections first
+    if (dialect === 'postgres' || dialect === 'cockroachdb') {
+      try {
+        await (d as any).executeRun(
+          `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${dbName}' AND pid<>pg_backend_pid()`, []
+        );
+      } catch {}
+    }
+
+    const ddl = getDropDDL(dialect, dbName);
+    try {
+      await (d as any).executeRun(ddl, []);
+      await d.disconnect();
+      return { ok: true, detail: `Database "${dbName}" dropped` };
+    } catch (err: any) {
+      await d.disconnect();
+      const msg = (err?.message || '').toLowerCase();
+      if (msg.includes('does not exist') || msg.includes('n\'existe pas') || msg.includes('not exist')) {
+        return { ok: true, detail: `Database "${dbName}" does not exist (already dropped)` };
+      }
+      return { ok: false, error: err.message };
+    }
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
 }
 
 /**
@@ -287,4 +457,69 @@ export async function createDatabase(
   } catch (err: any) {
     return { ok: false, error: err.message };
   }
+}
+
+// ============================================================
+// Named Connection Registry
+// ============================================================
+//
+// Stores dialect instances by name in a module-level Map.
+// Since @mostajs/orm is a serverExternalPackage (NOT bundled by webpack),
+// this Map is shared across ALL server chunks in the same Node.js process.
+//
+// LIFECYCLE:
+//   Server starts → Map empty
+//   First request → createConnection() + registerNamedConnection('portal', dialect)
+//   Subsequent requests → getNamedConnection('portal') → same dialect ✅
+//   Server restarts → Map empty → reconnects on first request
+//
+// USAGE (Next.js):
+//   import { createConnection, registerNamedConnection, getNamedConnection } from '@mostajs/orm'
+//   export async function getDialect() {
+//     const cached = getNamedConnection('portal')
+//     if (cached) return cached
+//     const dialect = await createConnection(config, schemas)
+//     registerNamedConnection('portal', dialect)
+//     return dialect
+//   }
+// ============================================================
+
+/** Named connections registry — shared across all consumers of this module */
+const _namedConnections = new Map<string, IDialect>();
+
+/**
+ * Register a named connection for later retrieval.
+ * @param name    - Unique name (e.g., 'portal', 'analytics', 'tenant-42')
+ * @param dialect - Connected dialect instance
+ */
+export function registerNamedConnection(name: string, dialect: IDialect): void {
+  _namedConnections.set(name, dialect);
+}
+
+/**
+ * Retrieve a previously registered named connection.
+ * Returns null if not found. Does NOT create a new connection.
+ * @param name - Connection name
+ */
+export function getNamedConnection(name: string): IDialect | null {
+  return _namedConnections.get(name) ?? null;
+}
+
+/**
+ * Remove a named connection from the registry.
+ * Does NOT disconnect — call dialect.disconnect() separately.
+ * @param name - Connection name to remove
+ */
+export function removeNamedConnection(name: string): void {
+  _namedConnections.delete(name);
+}
+
+/** List all registered connection names. */
+export function listNamedConnections(): string[] {
+  return Array.from(_namedConnections.keys());
+}
+
+/** Remove all named connections (for testing or shutdown). */
+export function clearNamedConnections(): void {
+  _namedConnections.clear();
 }

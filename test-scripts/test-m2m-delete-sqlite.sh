@@ -1,40 +1,38 @@
 #!/bin/bash
 # Author: Dr Hamid MADANI drmdh@msn.com
-# Test: SecuAccessPro SQL compatibility fixes (B, C, D)
-# Validates many-to-many relation patterns on PostgreSQL
+# Test P0-2: M2M delete junction cleanup — SQLite
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORM_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-PG_URI="${PG_URI:-postgresql://devuser:devpass26@localhost:5432/test_fixes_orm}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 NC='\033[0m'
+PASS=0; FAIL=0
 
-PASS=0
-FAIL=0
-
-ok()   { PASS=$((PASS+1)); echo -e "  ${GREEN}✓${NC} $1"; }
-fail() { FAIL=$((FAIL+1)); echo -e "  ${RED}✗${NC} $1 — $2"; }
+DB_FILE=$(mktemp /tmp/test-m2m-delete-XXXXXX.db)
+trap "rm -f $DB_FILE" EXIT
 
 echo -e "\n${CYAN}════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Test SecuAccessPro SQL Fixes (B, C, D) — PostgreSQL${NC}"
+echo -e "${CYAN}  Test P0-2 : M2M Delete Junction Cleanup — SQLite${NC}"
 echo -e "${CYAN}════════════════════════════════════════════════════════${NC}\n"
 
 cd "$ORM_DIR"
-RESULT=$(PG_URI="$PG_URI" node tests-scripts/test-secuaccess-fixes.mjs 2>/dev/null)
+RESULT=$(DIALECT=sqlite DB_URI="$DB_FILE" node test-scripts/test-m2m-delete.mjs 2>/dev/null)
 
 if [ -z "$RESULT" ]; then
-  echo -e "  ${RED}✗ Test script failed. Errors:${NC}"
-  PG_URI="$PG_URI" node tests-scripts/test-secuaccess-fixes.mjs 2>&1 | head -40
+  echo -e "  ${RED}✗ Script failed. Errors:${NC}"
+  DIALECT=sqlite DB_URI="$DB_FILE" node test-scripts/test-m2m-delete.mjs 2>&1 | head -30
   exit 1
 fi
 
 while IFS='|' read -r status label detail; do
-  if [ "$status" = "OK" ]; then ok "$label"; else fail "$label" "$detail"; fi
+  if [ "$status" = "OK" ]; then
+    PASS=$((PASS+1)); echo -e "  ${GREEN}✓${NC} $label"
+  else
+    FAIL=$((FAIL+1)); echo -e "  ${RED}✗${NC} $label — $detail"
+  fi
 done < <(echo "$RESULT" | node -e "
   const r = JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));
   for (const [k, v] of Object.entries(r)) {
@@ -47,5 +45,4 @@ echo ""
 echo -e "${CYAN}────────────────────────────────────────────────────────${NC}"
 echo -e "  ${GREEN}$PASS passed${NC}  ${RED}$FAIL failed${NC}"
 echo -e "${CYAN}────────────────────────────────────────────────────────${NC}"
-
-[ "$FAIL" -eq 0 ] && exit 0 || exit 1
+[ "$FAIL" -eq 0 ] || exit 1
