@@ -67,6 +67,17 @@ class SQLiteDialect extends AbstractSqlDialect {
     return "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
   }
 
+  /** SQLite uses `PRAGMA table_info(name)` — the result column is `name`. */
+  protected async getExistingColumns(tableName: string): Promise<Set<string>> {
+    try {
+      const rows = await this.executeQuery<{ name: string }>(
+        `PRAGMA table_info(${this.quoteIdentifier(tableName)})`,
+        [],
+      );
+      return new Set(rows.map(r => r.name).filter(Boolean));
+    } catch { return new Set(); }
+  }
+
   // --- Hooks ---
 
   protected supportsIfNotExists(): boolean { return true; }

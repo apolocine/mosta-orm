@@ -174,6 +174,31 @@ export abstract class AbstractSqlDialect implements IDialect {
   /** Return a SQL query that lists table names. Result rows must have a 'name' column. */
   abstract getTableListQuery(): string;
 
+  /**
+   * List existing column names for a table. Default uses ANSI
+   * `information_schema.columns` (Postgres, MySQL, MariaDB, MSSQL, HSQLDB,
+   * Spanner, CockroachDB). Oracle / SQLite / DB2 override with their native
+   * catalog views.
+   */
+  protected async getExistingColumns(tableName: string): Promise<Set<string>> {
+    try {
+      const rows = await this.executeQuery<{ column_name?: string; COLUMN_NAME?: string }>(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = ${this.getPlaceholder(1)}`,
+        [tableName],
+      );
+      const set = new Set<string>();
+      for (const r of rows) {
+        const c = (r.column_name ?? r.COLUMN_NAME) as string | undefined;
+        if (c) set.add(c);
+      }
+      return set;
+    } catch {
+      // Best-effort : if the catalog query is not supported, return an empty
+      // set so initSchema falls back to "no missing columns" (legacy behavior).
+      return new Set();
+    }
+  }
+
   // --- Protected state ---
 
   protected config: ConnectionConfig | null = null;
@@ -638,6 +663,13 @@ export abstract class AbstractSqlDialect implements IDialect {
     const values: unknown[] = [id];
 
     for (const [name, field] of Object.entries(schema.fields || {})) {
+      // 'id' and '_id' are emitted unconditionally above as the PK column.
+      // Skip them here so we never produce SQL like
+      //   INSERT INTO "users" ("id", "id", "email", …)
+      // which Oracle (rightly) rejects with ORA-00957 "duplicate column name".
+      // SQLite and Postgres tolerate this silently — the bug stayed hidden
+      // until the first Oracle / DB2 / MSSQL run.
+      if (name === 'id' || name === '_id') continue;
       if (name in data) {
         columns.push(name);
         placeholders.push(this.nextPlaceholder());
@@ -910,6 +942,67 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   // --- Schema management (hibernate.hbm2ddl.auto) ---
 
+  /**
+   * For an existing table, add any fields/relations that are declared in the
+   * schema but missing from the live table. Works in `update` strategy.
+   * Skipped silently if the dialect can't list its columns (best-effort).
+   */
+  protected async addMissingColumns(schema: EntitySchema): Promise<void> {
+    const q = (n: string) => this.quoteIdentifier(n);
+    let existing: Set<string>;
+    try {
+      existing = await this.getExistingColumns(schema.collection);
+    } catch {
+      return;   // can't introspect → leave table alone
+    }
+    if (existing.size === 0) return;
+
+    // Case-insensitive lookup helper (Oracle uppercases by default, MySQL is
+    // typically lowercase, etc. — match by lowercased column name).
+    const has = (name: string) => {
+      const lc = name.toLowerCase();
+      for (const c of existing) if (c.toLowerCase() === lc) return true;
+      return false;
+    };
+
+    // Field columns
+    for (const [name, field] of Object.entries(schema.fields || {})) {
+      if (name === 'id' || name === '_id') continue;
+      if (has(name)) continue;
+      let colDef = `${q(name)} ${this.fieldToSqlType(field)}`;
+      const isNowDefault = field.default === 'now' || field.default === '__MOSTA_NOW__';
+      if (field.default !== undefined && !isNowDefault && field.default !== null) {
+        const defVal = this.serializeValue(field.default, field);
+        if (typeof defVal === 'string') colDef += ` DEFAULT '${defVal.replace(/'/g, "''")}'`;
+        else if (typeof defVal === 'number') colDef += ` DEFAULT ${defVal}`;
+      }
+      // NOT NULL skipped on ALTER : adding a NOT NULL column to a non-empty
+      // table requires a DEFAULT or fails on most engines. Leave it nullable
+      // and let the application enforce it (or run a manual migration).
+      const sql = `ALTER TABLE ${q(schema.collection)} ADD ${colDef}`;
+      try {
+        this.log('DDL_ALTER_ADD', `${schema.collection}.${name}`, sql);
+        await this.executeRun(sql, []);
+      } catch (e) {
+        this.log('DDL_ALTER_ADD_FAIL', `${schema.collection}.${name}`, (e as Error).message);
+      }
+    }
+
+    // M2O / O2O relation FK columns
+    for (const [name, rel] of Object.entries(schema.relations || {})) {
+      if (rel.type !== 'many-to-one' && rel.type !== 'one-to-one') continue;
+      const colName = rel.joinColumn || name;
+      if (has(colName)) continue;
+      const sql = `ALTER TABLE ${q(schema.collection)} ADD ${q(colName)} ${this.getIdColumnType()}`;
+      try {
+        this.log('DDL_ALTER_ADD_FK', `${schema.collection}.${colName}`, sql);
+        await this.executeRun(sql, []);
+      } catch (e) {
+        this.log('DDL_ALTER_ADD_FK_FAIL', `${schema.collection}.${colName}`, (e as Error).message);
+      }
+    }
+  }
+
   async initSchema(schemas: EntitySchema[]): Promise<void> {
     this.schemas = schemas;
     const strategy = this.config?.schemaStrategy ?? 'none';
@@ -932,9 +1025,23 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     // strategy: 'update' or 'create'
     for (const schema of schemas) {
+      const tableExisted = strategy === 'update'
+        ? await this.tableExists(schema.collection)
+        : false;
+
       const createSql = this.generateCreateTable(schema);
       this.log('DDL', schema.collection, createSql);
       await this.executeRun(createSql, []);
+
+      // strategy=update : if the table already existed, add any column that
+      // is declared in schema.fields but missing from the live table. This
+      // catches the case where new fields are added between releases — the
+      // pre-1.10.3 behavior was CREATE TABLE IF NOT EXISTS only, which
+      // silently left old tables unchanged and caused ORA-00904 / equivalent
+      // at INSERT time.
+      if (strategy === 'update' && tableExisted) {
+        await this.addMissingColumns(schema);
+      }
 
       const indexStatements = this.generateIndexes(schema);
       for (const stmt of indexStatements) {
