@@ -100,7 +100,7 @@ function buildMongooseSchema(entity: EntitySchema): Schema {
     if (field.trim) schemaDef.trim = true;
     if (field.enum) schemaDef.enum = field.enum;
     if (field.default !== undefined && field.type !== 'array') {
-      schemaDef.default = field.default === 'now' ? Date.now : field.default;
+      schemaDef.default = (field.default === 'now' || field.default === '__MOSTA_NOW__') ? Date.now : field.default;
     }
 
     definition[name] = schemaDef;
