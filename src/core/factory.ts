@@ -1,6 +1,11 @@
 // Adapter Factory - Reads DB_DIALECT + SGBD_URI from env or config
 // Equivalent to Hibernate's SessionFactory / persistence.xml
 // Author: Dr Hamid MADANI drmdh@msn.com
+// Use bare specifiers — some webpack configs in downstream apps can't resolve
+// the 'node:' scheme prefix for built-ins when this package gets transitively
+// pulled into a non-server context. Bare names are universally accepted.
+import { fileURLToPath, pathToFileURL } from 'url';
+import { dirname, resolve as pathResolve } from 'path';
 import type { IDialect, DialectType, ConnectionConfig, EntitySchema } from './types.js';
 import { getDialectConfig, getSupportedDialects } from './config.js';
 import { getAllSchemas, registerSchemas } from './registry.js';
@@ -9,30 +14,53 @@ import { getAllSchemas, registerSchemas } from './registry.js';
 let currentDialect: IDialect | null = null;
 let currentConfig: ConnectionConfig | null = null;
 
+/** Whitelist of supported dialect module filenames (prevents arbitrary require). */
+const DIALECT_FILE: Record<DialectType, string> = {
+  mongodb:     'mongo.dialect.js',
+  sqlite:      'sqlite.dialect.js',
+  postgres:    'postgres.dialect.js',
+  mysql:       'mysql.dialect.js',
+  mariadb:     'mariadb.dialect.js',
+  oracle:      'oracle.dialect.js',
+  mssql:       'mssql.dialect.js',
+  cockroachdb: 'cockroachdb.dialect.js',
+  db2:         'db2.dialect.js',
+  hana:        'hana.dialect.js',
+  hsqldb:      'hsqldb.dialect.js',
+  spanner:     'spanner.dialect.js',
+  sybase:      'sybase.dialect.js',
+};
+
+/**
+ * Opaque dynamic importer — hides the specifier from webpack / Vite / Rollup
+ * static analysis so downstream bundlers (Next.js client build, Vite SSR, etc.)
+ * do NOT trace every dialect driver (mongoose, better-sqlite3, pg, oracledb…)
+ * into the dependency graph. Only the dialect actually requested at runtime is
+ * loaded. Node.js resolves the absolute file:// URL at runtime.
+ *
+ * The `/* webpackIgnore * /` and `/* @vite-ignore * /` pragmas are belt-and-
+ * braces for when consumers DO bundle @mostajs/orm (i.e. not externalized).
+ * The template-literal specifier alone is enough to defeat most analyzers ;
+ * the pragmas cover the rest.
+ */
+const _import: (url: string) => Promise<any> =
+  (0, eval)('(u) => import(/* webpackIgnore: true */ /* @vite-ignore */ u)');
+
 /**
  * Dynamically load a dialect adapter module.
- * Only the selected dialect is loaded — no unused drivers in memory.
+ * Only the selected dialect is loaded — no unused drivers in memory, and
+ * no static edge in the bundler graph.
  */
 async function loadDialectModule(dialect: DialectType): Promise<{ createDialect: () => IDialect }> {
-  switch (dialect) {
-    case 'mongodb':      return import('../dialects/mongo.dialect.js');
-    case 'sqlite':       return import('../dialects/sqlite.dialect.js');
-    case 'postgres':     return import('../dialects/postgres.dialect.js');
-    case 'mysql':        return import('../dialects/mysql.dialect.js');
-    case 'mariadb':      return import('../dialects/mariadb.dialect.js');
-    case 'oracle':       return import('../dialects/oracle.dialect.js');
-    case 'mssql':        return import('../dialects/mssql.dialect.js');
-    case 'cockroachdb':  return import('../dialects/cockroachdb.dialect.js');
-    case 'db2':          return import('../dialects/db2.dialect.js');
-    case 'hana':         return import('../dialects/hana.dialect.js');
-    case 'hsqldb':       return import('../dialects/hsqldb.dialect.js');
-    case 'spanner':      return import('../dialects/spanner.dialect.js');
-    case 'sybase':       return import('../dialects/sybase.dialect.js');
-    default:
-      throw new Error(
-        `No loader for dialect "${dialect}". Supported: ${getSupportedDialects().join(', ')}`
-      );
+  const file = DIALECT_FILE[dialect];
+  if (!file) {
+    throw new Error(
+      `No loader for dialect "${dialect}". Supported: ${getSupportedDialects().join(', ')}`
+    );
   }
+  const here = dirname(fileURLToPath(import.meta.url));
+  const abs  = pathToFileURL(pathResolve(here, '..', 'dialects', file)).href;
+  return _import(abs);
 }
 
 /**

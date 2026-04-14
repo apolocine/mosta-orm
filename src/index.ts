@@ -95,22 +95,20 @@ export { BaseRepository } from './core/base-repository.js';
 export { normalizeDoc, normalizeDocs } from './core/normalizer.js';
 
 // ============================================================
-// JDBC Bridge
+// JDBC Bridge — moved to subpath '@mostajs/orm/bridge' in v1.9.4
 // ============================================================
-export { JdbcNormalizer, parseUri } from './bridge/JdbcNormalizer.js';
-export { JDBC_REGISTRY, hasJdbcDriver, getJdbcDriverInfo } from './bridge/jdbc-registry.js';
-export { BridgeManager } from './bridge/BridgeManager.js';
-export {
-  saveJarFile,
-  deleteJarFile,
-  listJarFiles,
-  detectDialectFromJar,
-  getJdbcDialectStatus,
-} from './bridge/jar-upload.js';
-export type { BridgeInstance } from './bridge/BridgeManager.js';
-export type { JarUploadResult } from './bridge/jar-upload.js';
-export type { JdbcDriverInfo } from './bridge/jdbc-registry.js';
-export type { JdbcBridgeConfig } from './bridge/JdbcNormalizer.js';
+//
+// Reason : the JDBC bridge transitively imports `child_process`, `fs` and
+// spawns a Java subprocess. Keeping those symbols on the package root
+// dragged them into client bundles (Next.js RSC build, Vite SSR, etc.) —
+// causing `Can't resolve 'child_process'` in the browser chunk even for
+// apps that never touch JDBC.
+//
+// Migration : use the subpath export. Example :
+//   import { JdbcNormalizer, parseUri } from '@mostajs/orm/bridge'
+//
+// Types are re-exported from the subpath too ; no runtime cost for
+// consumers that don't use the bridge.
 
 // ============================================================
 // Entity Service (facade CRUD + EventEmitter for @mostajs/net)
