@@ -2,6 +2,38 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.10.0] — 2026-04-14
+
+### Added
+
+- **`IDialect.$transaction()`** — real ACID transactions across every SQL
+  dialect inheriting `AbstractSqlDialect` (SQLite, PostgreSQL, MySQL,
+  MariaDB, MSSQL, Oracle, DB2, CockroachDB, HANA, Sybase, HSQLDB, Spanner).
+  The default implementation wraps the callback in `BEGIN` / `COMMIT`
+  (`ROLLBACK` on throw) with an optional `isolation` argument.
+
+  ```ts
+  await dialect.$transaction(async (tx) => {
+    await tx.create(UserSchema, { email: 'a@b.c' })
+    await tx.update(UserSchema, id, { status: 'active' })
+    // throw → both writes rolled back
+  })
+  ```
+
+  Concrete dialects can override for pool-aware client checkout (strict
+  correctness under high concurrency). The default works transparently on
+  single-connection dialects (SQLite, HSQLDB) and with `poolSize: 1` on
+  pooled dialects.
+
+### Known limitations
+
+- Pool-based SQL dialects (Postgres, MySQL, …) : without per-dialect
+  client checkout, a `$transaction` callback running parallel queries may
+  land on different pool connections. Set `poolSize: 1` for strict
+  correctness, or wait for per-dialect overrides (planned 1.10.x).
+- MongoDB `$transaction` is not yet wired (requires session threading).
+  Planned for 1.10.1.
+
 ## [1.9.4] — 2026-04-14
 
 ### Breaking (minor — niche API)

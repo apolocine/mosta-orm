@@ -231,6 +231,56 @@ export abstract class AbstractSqlDialect implements IDialect {
     await this.executeRun(stmt, []);
   }
 
+  // ------------------------------------------------------------------
+  // Transactions — default BEGIN / COMMIT / ROLLBACK
+  // ------------------------------------------------------------------
+
+  /**
+   * Dialect-specific override hook — SQL syntax for starting a transaction.
+   * Most engines accept plain `BEGIN`; Oracle/DB2 use autocommit=off instead.
+   * Override in a concrete dialect for non-standard syntax.
+   */
+  protected beginSql(opts?: { isolation?: string }): string | null {
+    if (opts?.isolation) return `BEGIN; SET TRANSACTION ISOLATION LEVEL ${opts.isolation}`;
+    return 'BEGIN';
+  }
+
+  /** Dialect-specific override — returns null to skip (engine without explicit BEGIN). */
+  protected commitSql(): string | null  { return 'COMMIT'; }
+  protected rollbackSql(): string | null { return 'ROLLBACK'; }
+
+  /**
+   * Run `cb` inside a BEGIN/COMMIT/ROLLBACK block. The same dialect instance
+   * is passed to `cb` — all queries keep working without modification.
+   *
+   * For single-connection dialects (SQLite, HSQLDB embedded) this is strictly
+   * ACID. For pool-based dialects (Postgres, MySQL, …) this serialises
+   * correctly when `poolSize: 1`, and best-effort with a larger pool (queries
+   * may land on different connections). Concrete dialects should override to
+   * implement client checkout for strict correctness.
+   */
+  async $transaction<T>(
+    cb: (tx: IDialect) => Promise<T>,
+    opts?: { isolation?: 'READ UNCOMMITTED' | 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE' },
+  ): Promise<T> {
+    const beginStmt = this.beginSql(opts);
+    const commitStmt = this.commitSql();
+    const rollbackStmt = this.rollbackSql();
+
+    if (beginStmt)  await this.executeRun(beginStmt, []);
+    try {
+      const result = await cb(this as unknown as IDialect);
+      if (commitStmt) await this.executeRun(commitStmt, []);
+      return result;
+    } catch (err) {
+      if (rollbackStmt) {
+        try { await this.executeRun(rollbackStmt, []); }
+        catch { /* swallow — surface original error */ }
+      }
+      throw err;
+    }
+  }
+
   /** Serialize date values to a format suitable for this dialect */
   protected serializeDate(value: unknown): unknown {
     let d: Date | null = null;

@@ -436,6 +436,28 @@ export interface IDialect {
   /** Execute a raw non-SELECT statement (INSERT, UPDATE, DELETE) */
   executeRun?(sql: string, params: unknown[]): Promise<{ changes: number }>;
 
+  // --- Transactions (ACID) ---
+  /**
+   * Run `cb` inside a database transaction. On SQL dialects this wraps the
+   * callback in `BEGIN` / `COMMIT` (or `ROLLBACK` if the callback throws).
+   * On MongoDB, a replica-set session is used. On non-transactional or
+   * unsupported dialects, the callback is executed pass-through (non-atomic)
+   * and a warning is logged once per process.
+   *
+   * The callback receives the same dialect instance it was called on, so
+   * existing query code keeps working without changes.
+   *
+   * **Note on pooled SQL dialects** (Postgres, MySQL, MariaDB, MSSQL, …) :
+   * without per-dialect client checkout, parallel queries inside the callback
+   * may be dispatched on different pool connections. For strict correctness
+   * under concurrent load, set `poolSize: 1` on those dialects, or use a
+   * dialect that implements a scoped override of this method.
+   */
+  $transaction?<T>(
+    cb: (tx: IDialect) => Promise<T>,
+    opts?: { isolation?: 'READ UNCOMMITTED' | 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE' },
+  ): Promise<T>;
+
   // --- Schema management ---
   /** Drop a single table by name */
   dropTable?(tableName: string): Promise<void>;
