@@ -37,6 +37,32 @@ export const UserSchema: EntitySchema = {
 }
 ```
 
+## Unique keys
+
+A field can be marked unique, or several fields can be combined into a composite unique constraint via `indexes`.
+
+```typescript
+export const MemberSchema: EntitySchema = {
+  name: 'Member',
+  collection: 'members',
+  fields: {
+    email:    { type: 'string', required: true, unique: true },  // single unique
+    tenantId: { type: 'string', required: true },
+    slug:     { type: 'string', required: true },
+  },
+  indexes: [
+    { fields: { tenantId: 'asc', slug: 'asc' }, unique: true },  // composite unique
+  ],
+}
+```
+
+Both shapes enforce a DDL `UNIQUE` constraint on SQL dialects and a unique index on MongoDB. Lookup works the same way :
+
+```typescript
+await repo.findOne({ email: 'a@b.com' })                       // single unique
+await repo.findOne({ tenantId: 't1', slug: 'admin' })          // composite unique
+```
+
 ## Connect & CRUD
 
 ```typescript
@@ -55,6 +81,29 @@ await repo.findByIdWithRelations(id, ['roles'])
 await repo.upsert({ email: 'a@b.com' }, { name: 'Upserted' })
 await repo.count({ status: 'active' })
 ```
+
+## Transactions
+
+Group multiple operations into a single atomic unit. SQL dialects (PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle, DB2, CockroachDB, HANA, Sybase, HSQLDB, Spanner) wrap the callback in `BEGIN` / `COMMIT` / `ROLLBACK`. If any operation throws, every write inside the block is rolled back.
+
+```typescript
+import { getDialect } from '@mostajs/orm'
+
+const dialect = await getDialect()
+
+await dialect.$transaction(async (tx) => {
+  await tx.create('accounts', { id: 'a', balance: 100 })
+  await tx.update('accounts', { id: 'b' }, { $inc: { balance: -50 } })
+  await tx.update('accounts', { id: 'a' }, { $inc: { balance:  50 } })
+  // throw here → both updates are rolled back, `accounts.a` row is removed
+})
+```
+
+**Isolation** : default per dialect (SQL → `READ COMMITTED`, SQLite → `DEFERRED`). Pass `{ isolation: 'SERIALIZABLE' }` as 2nd argument to override (SQL only).
+
+**All SQL dialects listed above support ACID natively** — PostgreSQL, MySQL/MariaDB, SQL Server, Oracle, DB2, SQLite, CockroachDB, HANA, Sybase, HSQLDB, Spanner. No configuration required beyond the usual connection.
+
+**MongoDB is the only exception** : multi-document ACID transactions require a replica set (a single-node `mongod --replSet rs0` is enough for dev — this is a MongoDB server requirement, not a limitation of this library). On a standalone server, `$transaction` runs the callback without wrapping — safe for read-heavy flows, non-atomic for writes.
 
 ## Environment
 
