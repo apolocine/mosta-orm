@@ -2,6 +2,47 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.10.3] — 2026-04-15
+
+### Added — `update` strategy now ALTERs existing tables
+
+- **`schemaStrategy: 'update'` adds missing columns** (fields and M2O / O2O FK
+  columns) to pre-existing tables via `ALTER TABLE ADD …`. Pre-1.10.3 the
+  `update` strategy was effectively `CREATE TABLE IF NOT EXISTS` — it never
+  touched live tables, so adding a field to an entity between releases caused
+  `ORA-00904: invalid identifier` (Oracle), `1054 Unknown column` (MySQL),
+  `Invalid column name` (MSSQL) at the next INSERT.
+- New `protected getExistingColumns(tableName)` introspection method on
+  `AbstractSqlDialect`. Default uses ANSI `information_schema.columns`
+  (Postgres, MySQL, MariaDB, MSSQL, HSQLDB, Spanner, CockroachDB).
+  Overridden in :
+  - **`SQLiteDialect`** : `PRAGMA table_info(name)`
+  - **`OracleDialect`** : `SELECT column_name FROM user_tab_columns WHERE table_name = :1`
+- New `protected addMissingColumns(schema)` helper — case-insensitive diff
+  vs the live table, emits one `ALTER TABLE ADD` per missing column. NOT
+  NULL is intentionally skipped on ALTER (most engines reject it on a
+  populated table without a DEFAULT) — the application enforces it.
+
+Behavior remains 100% backward-compatible : if introspection fails, the
+helper silently no-ops (legacy "do nothing on update" path).
+
+## [1.10.2] — 2026-04-15
+
+### Fixed
+
+- **`prepareInsertData` skips `id`/`_id` in the fields loop.** When an
+  EntitySchema declared `id` (or `_id`) inside `fields` (the orm-adapter
+  emits this systematically with `default: '__MOSTA_OBJECT_ID__'`), the
+  generated INSERT contained the column twice :
+  ```sql
+  INSERT INTO "users" ("id", "id", "email", …) VALUES (?, ?, ?, …)
+  ```
+  SQLite and PostgreSQL silently tolerated the duplicate; **Oracle, DB2,
+  SQL Server, HANA, Sybase reject it with `ORA-00957: duplicate column
+  name`** (or equivalent). This shipped undetected because all integration
+  tests ran on SQLite. Regression tests on the bridge confirm 7/7 green
+  after the fix.
+
 ## [1.10.1] — 2026-04-15
 
 ### Fixed

@@ -68,6 +68,27 @@ class OracleDialect extends AbstractSqlDialect {
     return "SELECT table_name as name FROM user_tables";
   }
 
+  /**
+   * Oracle keeps identifiers in their original case when CREATE TABLE quoted
+   * them with double-quotes ("users", "userId"). user_tab_columns stores them
+   * verbatim. Pass the table name as-is — the bound parameter is matched
+   * case-sensitively by Oracle.
+   */
+  protected async getExistingColumns(tableName: string): Promise<Set<string>> {
+    try {
+      const rows = await this.executeQuery<{ COLUMN_NAME?: string; column_name?: string }>(
+        `SELECT column_name FROM user_tab_columns WHERE table_name = :1`,
+        [tableName],
+      );
+      const set = new Set<string>();
+      for (const r of rows) {
+        const c = (r.COLUMN_NAME ?? r.column_name) as string | undefined;
+        if (c) set.add(c);
+      }
+      return set;
+    } catch { return new Set(); }
+  }
+
   // --- Hooks ---
 
   // Oracle prior to 23c doesn't support IF NOT EXISTS
