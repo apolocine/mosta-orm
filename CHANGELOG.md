@@ -2,6 +2,25 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.10.1] — 2026-04-15
+
+### Fixed
+
+- **`__MOSTA_NOW__` sentinel recognised as "now" on every dialect.** The
+  `@mostajs/orm-adapter` emits `default: '__MOSTA_NOW__'` for timestamp
+  columns that should default to the current time (CreatedAt, UpdatedAt,
+  joinDate, etc.). Pre-1.10.1 dialects only recognised the string `'now'` —
+  so they emitted `DEFAULT '__MOSTA_NOW__'` literally in DDL, which Oracle
+  rejects with `ORA-01858: non-numeric character` when trying to cast the
+  literal string to `TIMESTAMP`. Both sentinels are now treated as "current
+  time" in `AbstractSqlDialect.createTableSql`, `prepareInsertData`,
+  `serializeDate`, and `MongoDialect.registerModel`.
+
+  Symptom on Oracle : schema init crashed with `ORA-01858` on every table
+  using a `default: '__MOSTA_NOW__'` field.
+  Symptom on SQLite/Postgres/MySQL : tables created with the literal string
+  `'__MOSTA_NOW__'` as default, silently making every row "dated" 1970-01-01.
+
 ## [1.10.0] — 2026-04-14
 
 ### Added

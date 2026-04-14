@@ -284,7 +284,7 @@ export abstract class AbstractSqlDialect implements IDialect {
   /** Serialize date values to a format suitable for this dialect */
   protected serializeDate(value: unknown): unknown {
     let d: Date | null = null;
-    if (value === 'now') d = new Date();
+    if (value === 'now' || value === '__MOSTA_NOW__') d = new Date();
     else if (value instanceof Date) d = value;
     else if (typeof value === 'string') {
       // If going through JDBC bridge, normalize ISO strings to JDBC format
@@ -645,7 +645,8 @@ export abstract class AbstractSqlDialect implements IDialect {
       } else if (field.default !== undefined) {
         columns.push(name);
         placeholders.push(this.nextPlaceholder());
-        const def = field.default === 'now' ? this.serializeDate('now') : field.default;
+        const isNowSentinel = field.default === 'now' || field.default === '__MOSTA_NOW__';
+        const def = isNowSentinel ? this.serializeDate('now') : field.default;
         values.push(this.serializeValue(def, field));
       }
     }
@@ -744,7 +745,10 @@ export abstract class AbstractSqlDialect implements IDialect {
       if (name === 'id') continue;
       let colDef = `  ${q(name)} ${this.fieldToSqlType(field)}`;
       // DEFAULT must come before NOT NULL for HSQLDB compatibility
-      if (field.default !== undefined && field.default !== 'now' && field.default !== null) {
+      // 'now' and '__MOSTA_NOW__' (the adapter's sentinel) both mean "current time":
+      // these are filled in at INSERT, not via a DEFAULT clause (portable across dialects).
+      const isNowDefault = field.default === 'now' || field.default === '__MOSTA_NOW__';
+      if (field.default !== undefined && !isNowDefault && field.default !== null) {
         const defVal = this.serializeValue(field.default, field);
         if (typeof defVal === 'string') colDef += ` DEFAULT '${defVal.replace(/'/g, "''")}'`;
         else if (typeof defVal === 'number') colDef += ` DEFAULT ${defVal}`;
