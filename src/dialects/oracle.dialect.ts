@@ -76,10 +76,18 @@ class OracleDialect extends AbstractSqlDialect {
    */
   protected async getExistingColumns(tableName: string): Promise<Set<string>> {
     try {
-      const rows = await this.executeQuery<{ COLUMN_NAME?: string; column_name?: string }>(
-        `SELECT column_name FROM user_tab_columns WHERE table_name = :1`,
-        [tableName],
-      );
+      // Oracle stores unquoted identifiers in upper case (USERS) and quoted
+      // identifiers verbatim ("users"). Match both : try the raw name first,
+      // then upper-case fallback if nothing came back.
+      const fetch = async (name: string) =>
+        this.executeQuery<{ COLUMN_NAME?: string; column_name?: string }>(
+          `SELECT column_name FROM user_tab_columns WHERE table_name = :1`,
+          [name],
+        );
+      let rows = await fetch(tableName);
+      if (rows.length === 0 && tableName !== tableName.toUpperCase()) {
+        rows = await fetch(tableName.toUpperCase());
+      }
       const set = new Set<string>();
       for (const r of rows) {
         const c = (r.COLUMN_NAME ?? r.column_name) as string | undefined;
@@ -279,13 +287,17 @@ class OracleDialect extends AbstractSqlDialect {
       return;
     }
 
-    // For 'update' strategy: create tables only if they don't exist
+    // For 'update' strategy: create tables only if they don't exist, and
+    // ALTER existing ones to add fields that appear in the schema but are
+    // missing from the live table.
     for (const schema of schemas) {
       const exists = await this.tableExists(schema.collection);
       if (!exists) {
         const createSql = this.generateCreateTable(schema);
         this.log('DDL', schema.collection, createSql);
         await this.executeRun(createSql, []);
+      } else if (strategy === 'update') {
+        await this.addMissingColumns(schema);
       }
 
       // Indexes: check existence before creating
