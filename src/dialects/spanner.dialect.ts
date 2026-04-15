@@ -60,6 +60,25 @@ class SpannerDialect extends AbstractSqlDialect {
     return "SELECT table_name as name FROM information_schema.tables WHERE table_schema = ''";
   }
 
+  /**
+   * Spanner has no `IF EXISTS` and no `CASCADE` on DROP. Indexes and
+   * referencing FK constraints must be dropped beforehand. Catch
+   * "Table not found" so a missing table is a no-op like other dialects.
+   */
+  async dropTable(tableName: string): Promise<void> {
+    try {
+      await this.executeRun(`DROP TABLE ${this.quoteIdentifier(tableName)}`, []);
+      this.log('DROP_TABLE', tableName);
+    } catch (e) {
+      const msg = (e as Error).message ?? '';
+      if (/not found|not exist/i.test(msg)) {
+        this.log('DROP_TABLE_SKIP', tableName, 'not found');
+        return;
+      }
+      throw e;
+    }
+  }
+
   // --- Hooks ---
 
   // Spanner doesn't support IF NOT EXISTS
@@ -260,6 +279,11 @@ class SpannerDialect extends AbstractSqlDialect {
       const exists = await this.tableExists(schema.collection);
       if (!exists) {
         ddlStatements.push(this.generateCreateTable(schema));
+      } else if (strategy === 'update') {
+        // ALTER TABLE statements run individually (executeRun) — outside the
+        // batched DDL because they're cheap and we want introspection to be
+        // current when building each ALTER.
+        await this.addMissingColumns(schema);
       }
 
       const indexStatements = this.generateIndexes(schema);

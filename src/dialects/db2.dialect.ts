@@ -58,6 +58,25 @@ class DB2Dialect extends AbstractSqlDialect {
     return "SELECT tabname as name FROM syscat.tables WHERE tabschema = CURRENT SCHEMA AND type = 'T'";
   }
 
+  /**
+   * DB2 has no `DROP TABLE IF EXISTS` and no `CASCADE` keyword. Catch
+   * SQLSTATE 42704 (object does not exist) so calling drop on a missing
+   * table is a no-op like other dialects.
+   */
+  async dropTable(tableName: string): Promise<void> {
+    try {
+      await this.executeRun(`DROP TABLE ${this.quoteIdentifier(tableName)}`, []);
+      this.log('DROP_TABLE', tableName);
+    } catch (e) {
+      const msg = (e as Error).message ?? '';
+      if (msg.includes('42704') || /not exist/i.test(msg)) {
+        this.log('DROP_TABLE_SKIP', tableName, 'not found');
+        return;
+      }
+      throw e;
+    }
+  }
+
   // --- Hooks ---
 
   // DB2 11.5+ supports IF NOT EXISTS, but we stay safe
@@ -193,6 +212,8 @@ class DB2Dialect extends AbstractSqlDialect {
         const createSql = this.generateCreateTable(schema);
         this.log('DDL', schema.collection, createSql);
         await this.executeRun(createSql, []);
+      } else if (strategy === 'update') {
+        await this.addMissingColumns(schema);
       }
 
       const indexStatements = this.generateIndexes(schema);
