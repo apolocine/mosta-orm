@@ -74,6 +74,22 @@ class OracleDialect extends AbstractSqlDialect {
    * verbatim. Pass the table name as-is — the bound parameter is matched
    * case-sensitively by Oracle.
    */
+  /**
+   * Oracle-correct DROP TABLE :
+   * - `IF EXISTS` is not supported → wrap in PL/SQL block and ignore ORA-00942
+   * - cascade keyword is `CASCADE CONSTRAINTS`, not just `CASCADE`
+   * - `PURGE` skips the recycle bin so the table can be recreated immediately
+   */
+  async dropTable(tableName: string): Promise<void> {
+    const sql =
+      `BEGIN ` +
+      `  EXECUTE IMMEDIATE 'DROP TABLE ${this.quoteIdentifier(tableName)} CASCADE CONSTRAINTS PURGE'; ` +
+      `EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; ` +
+      `END;`;
+    await this.executeRun(sql, []);
+    this.log('DROP_TABLE', tableName);
+  }
+
   protected async getExistingColumns(tableName: string): Promise<Set<string>> {
     try {
       // Oracle stores unquoted identifiers in upper case (USERS) and quoted

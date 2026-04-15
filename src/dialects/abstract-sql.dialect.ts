@@ -965,10 +965,25 @@ export abstract class AbstractSqlDialect implements IDialect {
       return false;
     };
 
-    // Field columns
+    // Field columns. We DO consider 'id' here : some legacy tables use a
+    // composite PK (e.g. user_roles(userId, roleId)) without a surrogate id
+    // column — when migrating to the new schema we need to add it. The
+    // column is added nullable (NOT NULL is skipped on ALTER) so the call
+    // succeeds on populated tables ; existing rows stay with NULL id and
+    // need a manual backfill.
     for (const [name, field] of Object.entries(schema.fields || {})) {
-      if (name === 'id' || name === '_id') continue;
+      if (name === '_id') continue;
       if (has(name)) continue;
+      if (name === 'id') {
+        const sql = `ALTER TABLE ${q(schema.collection)} ADD ${q('id')} ${this.getIdColumnType()}`;
+        try {
+          this.log('DDL_ALTER_ADD_ID', schema.collection, sql);
+          await this.executeRun(sql, []);
+        } catch (e) {
+          this.log('DDL_ALTER_ADD_ID_FAIL', schema.collection, (e as Error).message);
+        }
+        continue;
+      }
       let colDef = `${q(name)} ${this.fieldToSqlType(field)}`;
       const isNowDefault = field.default === 'now' || field.default === '__MOSTA_NOW__';
       if (field.default !== undefined && !isNowDefault && field.default !== null) {
