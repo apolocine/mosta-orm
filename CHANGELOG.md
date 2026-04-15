@@ -2,6 +2,29 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.10.4] — 2026-04-15
+
+### Fixed
+
+- **`OracleDialect.initSchema` now calls `addMissingColumns`** on existing
+  tables (`update` strategy). The dialect overrides `initSchema` for FK /
+  junction handling and was therefore bypassing the new ALTER-on-update
+  behavior introduced in 1.10.3 for SQL dialects sharing the abstract
+  implementation. Symptom : `ORA-00904: invalid identifier` on INSERT for
+  any column added between releases.
+
+  ```diff
+    if (!exists) {
+      await this.executeRun(this.generateCreateTable(schema), [])
+  +  } else if (strategy === 'update') {
+  +    await this.addMissingColumns(schema)
+    }
+  ```
+
+  Same fix should be applied to `db2.dialect.ts`, `hana.dialect.ts`, and
+  `spanner.dialect.ts` (they share the same override pattern). Pending
+  Oracle validation, those will land in 1.10.5.
+
 ## [1.10.3] — 2026-04-15
 
 ### Added — `update` strategy now ALTERs existing tables
