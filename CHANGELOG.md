@@ -2,6 +2,23 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.10.5] — 2026-04-15
+
+### Added
+
+- **`addMissingColumns` now also adds the `id` column** when a legacy table
+  uses a composite PK and lacks the surrogate `id` declared in the schema
+  (e.g. `user_roles(userId, roleId)` migrating to `user_roles(id, userId, roleId, createdAt)`).
+  Added nullable on populated tables — backfill is the user's responsibility.
+
+### Fixed
+
+- **Oracle `dropTable`** now uses Oracle-correct syntax. The default
+  `DROP TABLE IF EXISTS x CASCADE` is invalid SQL on Oracle (`IF EXISTS`
+  unsupported, cascade keyword is `CASCADE CONSTRAINTS`). Wrapped in a
+  PL/SQL block that swallows ORA-00942 (table not found) and adds `PURGE`
+  so the table can be recreated immediately without recycle-bin name clash.
+
 ## [1.10.4] — 2026-04-15
 
 ### Fixed
