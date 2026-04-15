@@ -2,6 +2,28 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.10.6] — 2026-04-15
+
+### Added — `addMissingColumns` + dialect-correct `dropTable` for DB2 / HANA / Spanner
+
+Same fixes as Oracle 1.10.4-1.10.5, applied to the three other dialects
+that override `initSchema` :
+
+- **`DB2Dialect`** :
+  - `initSchema('update')` now calls `addMissingColumns` on existing tables.
+  - `dropTable` issues plain `DROP TABLE x` (DB2 has no `IF EXISTS` /
+    `CASCADE` keyword) and silently ignores SQLSTATE 42704 (object not found).
+- **`HANADialect`** :
+  - `initSchema('update')` now calls `addMissingColumns` on existing tables.
+  - `dropTable` issues `DROP TABLE x CASCADE` and silently ignores HANA
+    error 259 (invalid table name).
+- **`SpannerDialect`** :
+  - `initSchema('update')` now calls `addMissingColumns` on existing tables
+    (executes ALTER TABLE statements outside the batched DDL — they are
+    cheap and need fresh introspection per call).
+  - `dropTable` issues plain `DROP TABLE x` (Spanner forbids `IF EXISTS`
+    and `CASCADE`) and silently ignores "not found" errors.
+
 ## [1.10.5] — 2026-04-15
 
 ### Added

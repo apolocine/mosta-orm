@@ -57,6 +57,24 @@ class HANADialect extends AbstractSqlDialect {
     return "SELECT table_name as name FROM tables WHERE schema_name = CURRENT_SCHEMA";
   }
 
+  /**
+   * HANA supports `CASCADE` on DROP but not `IF EXISTS`. Catch error 259
+   * "invalid table name" so calling drop on a missing table is a no-op.
+   */
+  async dropTable(tableName: string): Promise<void> {
+    try {
+      await this.executeRun(`DROP TABLE ${this.quoteIdentifier(tableName)} CASCADE`, []);
+      this.log('DROP_TABLE', tableName);
+    } catch (e) {
+      const msg = (e as Error).message ?? '';
+      if (/invalid table name|not found|259/i.test(msg)) {
+        this.log('DROP_TABLE_SKIP', tableName, 'not found');
+        return;
+      }
+      throw e;
+    }
+  }
+
   // --- Hooks ---
 
   // HANA doesn't support IF NOT EXISTS for tables
@@ -179,6 +197,8 @@ class HANADialect extends AbstractSqlDialect {
         const createSql = this.generateCreateTable(schema);
         this.log('DDL', schema.collection, createSql);
         await this.executeRun(createSql, []);
+      } else if (strategy === 'update') {
+        await this.addMissingColumns(schema);
       }
 
       const indexStatements = this.generateIndexes(schema);
