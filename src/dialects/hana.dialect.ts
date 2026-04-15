@@ -61,6 +61,12 @@ class HANADialect extends AbstractSqlDialect {
    * HANA supports `CASCADE` on DROP but not `IF EXISTS`. Catch error 259
    * "invalid table name" so calling drop on a missing table is a no-op.
    */
+  /** HANA uses implicit transactions ; standalone BEGIN is invalid. */
+  protected beginSql(opts?: { isolation?: string }): string | null {
+    if (opts?.isolation) return `SET TRANSACTION ISOLATION LEVEL ${opts.isolation}`;
+    return null;
+  }
+
   async dropTable(tableName: string): Promise<void> {
     try {
       await this.executeRun(`DROP TABLE ${this.quoteIdentifier(tableName)} CASCADE`, []);

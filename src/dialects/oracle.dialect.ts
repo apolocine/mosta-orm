@@ -80,6 +80,19 @@ class OracleDialect extends AbstractSqlDialect {
    * - cascade keyword is `CASCADE CONSTRAINTS`, not just `CASCADE`
    * - `PURGE` skips the recycle bin so the table can be recreated immediately
    */
+  /**
+   * Oracle has implicit transactions — there is no SQL `BEGIN` keyword.
+   * The default `AbstractSqlDialect.beginSql()` returns "BEGIN" which on
+   * Oracle is interpreted as a PL/SQL block opener — `BEGIN ;` alone is
+   * malformed → ORA-06550 PLS-00103. Override to skip BEGIN entirely
+   * (return null) ; SET TRANSACTION ISOLATION LEVEL is used only when
+   * the caller asks for a specific isolation.
+   */
+  protected beginSql(opts?: { isolation?: string }): string | null {
+    if (opts?.isolation) return `SET TRANSACTION ISOLATION LEVEL ${opts.isolation}`;
+    return null;
+  }
+
   async dropTable(tableName: string): Promise<void> {
     const sql =
       `BEGIN ` +
