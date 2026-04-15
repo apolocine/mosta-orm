@@ -2,6 +2,23 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.10.8] — 2026-04-15
+
+### Fixed — `$transaction` BEGIN keyword on Oracle / DB2 / HANA
+
+The default `AbstractSqlDialect.beginSql()` returned `"BEGIN"` for every
+SQL dialect. Oracle, DB2 and HANA all use **implicit** transactions —
+there is no SQL `BEGIN` keyword, only PL/SQL block opener. Sending
+`BEGIN ;` alone made Oracle raise `ORA-06550 PLS-00103` (DB2 / HANA
+similar SQL parse errors). Symptom in production : every `$transaction`
+call (which the bridge uses for nested writes / login → `update last_login_at`)
+crashed at the very first statement.
+
+Each of these three dialects now overrides `beginSql()` to **return null**
+(skip the BEGIN), keeping the COMMIT/ROLLBACK on success/throw. When the
+caller asks for an isolation level, the dialect-correct `SET TRANSACTION
+ISOLATION LEVEL …` (`SET CURRENT ISOLATION = …` for DB2) is emitted instead.
+
 ## [1.10.7] — 2026-04-15
 
 ### Fixed — `'__MOSTA_NOW__'` sentinel handled at INSERT time too

@@ -63,6 +63,12 @@ class DB2Dialect extends AbstractSqlDialect {
    * SQLSTATE 42704 (object does not exist) so calling drop on a missing
    * table is a no-op like other dialects.
    */
+  /** DB2 uses implicit transactions ; standalone BEGIN is invalid. */
+  protected beginSql(opts?: { isolation?: string }): string | null {
+    if (opts?.isolation) return `SET CURRENT ISOLATION = ${opts.isolation}`;
+    return null;
+  }
+
   async dropTable(tableName: string): Promise<void> {
     try {
       await this.executeRun(`DROP TABLE ${this.quoteIdentifier(tableName)}`, []);
