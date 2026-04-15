@@ -78,7 +78,7 @@ export class MySQLDialect extends AbstractSqlDialect {
   // MySQL/MariaDB DATETIME: use 'YYYY-MM-DD HH:MM:SS' format (no T, no Z)
   protected serializeDate(value: unknown): unknown {
     let d: Date | null = null;
-    if (value === 'now') d = new Date();
+    if (value === 'now' || value === '__MOSTA_NOW__') d = new Date();
     else if (value instanceof Date) d = value;
     else if (typeof value === 'string') {
       const parsed = new Date(value);
