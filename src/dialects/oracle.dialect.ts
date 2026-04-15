@@ -121,7 +121,7 @@ class OracleDialect extends AbstractSqlDialect {
 
   // Oracle: pass native Date objects — oracledb handles binding correctly
   protected serializeDate(value: unknown): unknown {
-    if (value === 'now') return new Date();
+    if (value === 'now' || value === '__MOSTA_NOW__') return new Date();
     if (value instanceof Date) return value;
     if (typeof value === 'string') {
       const parsed = new Date(value);

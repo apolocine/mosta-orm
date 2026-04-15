@@ -2,6 +2,18 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.10.7] — 2026-04-15
+
+### Fixed — `'__MOSTA_NOW__'` sentinel handled at INSERT time too
+
+`OracleDialect.serializeDate` and `MysqlDialect.serializeDate` only checked
+`'now'`, not `'__MOSTA_NOW__'`. When a seed value carried the sentinel string
+verbatim (e.g. produced by the orm-cli template generator), the override
+fell into the `new Date(string)` branch → `Invalid Date` → returned the
+literal `'__MOSTA_NOW__'` to the driver → ORA-01858 (Oracle) or
+"Incorrect datetime value" (MySQL). Both overrides now recognise the
+sentinel like `AbstractSqlDialect.serializeDate` already did since 1.10.1.
+
 ## [1.10.6] — 2026-04-15
 
 ### Added — `addMissingColumns` + dialect-correct `dropTable` for DB2 / HANA / Spanner
