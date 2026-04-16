@@ -16,6 +16,7 @@ import type {
   QueryOptions,
   AggregateStage,
   AggregateGroupStage,
+  TxHandle,
 } from '../core/types.js';
 import { JdbcNormalizer } from '../bridge/JdbcNormalizer.js';
 import { hasJdbcDriver } from '../bridge/jdbc-registry.js';
@@ -274,9 +275,103 @@ export abstract class AbstractSqlDialect implements IDialect {
   protected commitSql(): string | null  { return 'COMMIT'; }
   protected rollbackSql(): string | null { return 'ROLLBACK'; }
 
+  // --- Savepoint hooks (nested transactions) ---
+  /** Emit a SAVEPOINT statement. Return null to signal "no savepoint support". */
+  protected savepointBeginSql(name: string): string | null {
+    return `SAVEPOINT ${this.quoteIdentifier(name)}`;
+  }
+  /** Release a savepoint (= nested commit). `null` means auto-release on successful path. */
+  protected savepointReleaseSql(name: string): string | null {
+    return `RELEASE SAVEPOINT ${this.quoteIdentifier(name)}`;
+  }
+  /** Rollback to a savepoint (= nested rollback). */
+  protected savepointRollbackSql(name: string): string | null {
+    return `ROLLBACK TO SAVEPOINT ${this.quoteIdentifier(name)}`;
+  }
+
+  /** Stack of active transaction levels — for nested-transaction bookkeeping. */
+  private txStack: Array<{ id: string; savepointName?: string }> = [];
+
+  /**
+   * **Manual transaction API (public, since 1.11.0).**
+   *
+   * Opens a transaction and returns an opaque handle. Supports nesting :
+   * the outermost call emits a real `BEGIN` ; subsequent nested calls emit
+   * a `SAVEPOINT` (which all SQL engines except Spanner support). Pair
+   * every `beginTx()` with exactly one `commitTx(tx)` or `rollbackTx(tx)`
+   * in LIFO order.
+   */
+  async beginTx(opts?: { isolation?: string }): Promise<TxHandle> {
+    const depth = this.txStack.length + 1;
+    const id = `tx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+    if (depth === 1) {
+      const sql = this.beginSql(opts);
+      if (sql) await this.executeRun(sql, []);
+      this.txStack.push({ id });
+      return { id, startedAt: Date.now(), depth };
+    }
+
+    // Nested : SAVEPOINT
+    const savepointName = `mosta_sp_${depth}_${Math.random().toString(36).slice(2, 6)}`;
+    const sql = this.savepointBeginSql(savepointName);
+    if (!sql) {
+      throw new Error(
+        `[${this.dialectType}] nested transactions (savepoints) are not supported by this dialect. ` +
+        `Flatten your flow, or use $transaction(cb) once at the outer level.`
+      );
+    }
+    await this.executeRun(sql, []);
+    this.txStack.push({ id, savepointName });
+    return { id, startedAt: Date.now(), depth, savepointName };
+  }
+
+  async commitTx(tx: TxHandle): Promise<void> {
+    const top = this.txStack[this.txStack.length - 1];
+    if (!top || top.id !== tx.id) {
+      throw new Error(
+        `commitTx : out-of-order commit (expected ${top?.id ?? '(none)'}, got ${tx.id}). ` +
+        `Nested transactions must be committed/rolled-back in LIFO order.`
+      );
+    }
+    if (tx.depth === 1) {
+      const sql = this.commitSql();
+      if (sql) await this.executeRun(sql, []);
+    } else if (tx.savepointName) {
+      const sql = this.savepointReleaseSql(tx.savepointName);
+      if (sql) await this.executeRun(sql, []);
+    }
+    this.txStack.pop();
+  }
+
+  async rollbackTx(tx: TxHandle): Promise<void> {
+    const top = this.txStack[this.txStack.length - 1];
+    if (!top || top.id !== tx.id) {
+      // Out-of-order rollback : keep the stack consistent but do NOT throw —
+      // the caller is usually already surfacing its own error.
+      const idx = this.txStack.findIndex(t => t.id === tx.id);
+      if (idx >= 0) this.txStack.splice(idx);
+      return;
+    }
+    try {
+      if (tx.depth === 1) {
+        const sql = this.rollbackSql();
+        if (sql) await this.executeRun(sql, []);
+      } else if (tx.savepointName) {
+        const sql = this.savepointRollbackSql(tx.savepointName);
+        if (sql) await this.executeRun(sql, []);
+      }
+    } catch { /* swallow */ }
+    this.txStack.pop();
+  }
+
   /**
    * Run `cb` inside a BEGIN/COMMIT/ROLLBACK block. The same dialect instance
    * is passed to `cb` — all queries keep working without modification.
+   *
+   * Implementation detail : since 1.11.0 this delegates to the manual API
+   * (`beginTx` / `commitTx` / `rollbackTx`) so that dialects only need to
+   * override one of them to get both flavours consistent.
    *
    * For single-connection dialects (SQLite, HSQLDB embedded) this is strictly
    * ACID. For pool-based dialects (Postgres, MySQL, …) this serialises
@@ -288,20 +383,13 @@ export abstract class AbstractSqlDialect implements IDialect {
     cb: (tx: IDialect) => Promise<T>,
     opts?: { isolation?: 'READ UNCOMMITTED' | 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE' },
   ): Promise<T> {
-    const beginStmt = this.beginSql(opts);
-    const commitStmt = this.commitSql();
-    const rollbackStmt = this.rollbackSql();
-
-    if (beginStmt)  await this.executeRun(beginStmt, []);
+    const tx = await this.beginTx(opts);
     try {
       const result = await cb(this as unknown as IDialect);
-      if (commitStmt) await this.executeRun(commitStmt, []);
+      await this.commitTx(tx);
       return result;
     } catch (err) {
-      if (rollbackStmt) {
-        try { await this.executeRun(rollbackStmt, []); }
-        catch { /* swallow — surface original error */ }
-      }
+      await this.rollbackTx(tx);
       throw err;
     }
   }

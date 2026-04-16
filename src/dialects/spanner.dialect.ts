@@ -36,6 +36,12 @@ class SpannerDialect extends AbstractSqlDialect {
   private database: unknown = null;
   private spannerClient: unknown = null;
 
+  // Spanner does NOT support SAVEPOINTs — nested transactions must be
+  // flattened by the caller. Return null → beginTx will throw a clear error.
+  protected savepointBeginSql(_name: string): string | null { return null; }
+  protected savepointReleaseSql(_name: string): string | null { return null; }
+  protected savepointRollbackSql(_name: string): string | null { return null; }
+
   // --- Abstract implementations ---
 
   // Spanner uses backtick quoting

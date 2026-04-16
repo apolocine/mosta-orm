@@ -34,6 +34,19 @@ export class MSSQLDialect extends AbstractSqlDialect {
   readonly dialectType: DialectType = 'mssql';
   protected pool: unknown = null;
 
+  // --- Savepoint syntax specific to SQL Server ---
+  // MSSQL uses SAVE TRANSACTION / ROLLBACK TRANSACTION — no RELEASE equivalent
+  // (sub-tx is auto-released when outer COMMIT fires). Return null for release.
+  protected savepointBeginSql(name: string): string | null {
+    return `SAVE TRANSACTION ${name}`;
+  }
+  protected savepointReleaseSql(_name: string): string | null {
+    return null;
+  }
+  protected savepointRollbackSql(name: string): string | null {
+    return `ROLLBACK TRANSACTION ${name}`;
+  }
+
   // --- Abstract implementations ---
 
   quoteIdentifier(name: string): string {

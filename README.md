@@ -105,6 +105,40 @@ await dialect.$transaction(async (tx) => {
 
 **MongoDB is the only exception** : multi-document ACID transactions require a replica set (a single-node `mongod --replSet rs0` is enough for dev — this is a MongoDB server requirement, not a limitation of this library). On a standalone server, `$transaction` runs the callback without wrapping — safe for read-heavy flows, non-atomic for writes.
 
+### Manual transactions — `beginTx` / `commitTx` / `rollbackTx` (v1.11+)
+
+When the `$transaction(cb)` callback pattern is too restrictive (transaction spans several unrelated functions, commit depends on an external event), use the manual API :
+
+```ts
+const tx = await dialect.beginTx()
+try {
+  await dialect.create(UserSchema, { email: 'a@b.c', name: 'A' })
+  await someExternalCheck()          // could be async, could take seconds
+  if (ok) await dialect.commitTx(tx)
+  else    await dialect.rollbackTx(tx)
+} catch (e) {
+  await dialect.rollbackTx(tx)
+  throw e
+}
+```
+
+**Nested transactions — SAVEPOINTs are used automatically :**
+
+```ts
+const outer = await dialect.beginTx()               // → BEGIN
+await dialect.create(UserSchema, { email: 'o@x.io', name: 'Outer' })
+
+const inner = await dialect.beginTx()               // → SAVEPOINT mosta_sp_2_xxxx
+await dialect.create(UserSchema, { email: 'i@x.io', name: 'Inner' })
+await dialect.rollbackTx(inner)                     // → ROLLBACK TO SAVEPOINT
+//                                                     (inner row gone, outer untouched)
+
+await dialect.commitTx(outer)                       // → COMMIT
+//                                                     (outer row persisted)
+```
+
+Depth unbounded as long as the engine supports `SAVEPOINT` (every SQL dialect above except **Spanner**). MSSQL / Sybase use `SAVE TRANSACTION` / `ROLLBACK TRANSACTION` internally — transparent to the API. `commitTx` / `rollbackTx` enforce LIFO order (out-of-order commit throws, out-of-order rollback is silent).
+
 ## Environment
 
 ```bash
