@@ -2,6 +2,75 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.11.0] — 2026-04-16
+
+### Added — Manual transaction API (`beginTx` / `commitTx` / `rollbackTx`)
+
+Complements the existing `$transaction(cb)` wrapper with a manual trio
+for flows that don't fit in a single callback (multi-function pipelines,
+batch async, user-controlled commit).
+
+```ts
+const tx = await dialect.beginTx()
+try {
+  await dialect.create(UserSchema, { email: 'a@b.c' })
+  await someExternalCheck()          // async, could take seconds
+  if (ok) await dialect.commitTx(tx)
+  else    await dialect.rollbackTx(tx)
+} catch (e) { await dialect.rollbackTx(tx); throw e }
+```
+
+### Added — Nested transactions (SAVEPOINTs)
+
+Both `$transaction(cb)` and `beginTx()` now transparently support
+nesting. The outermost call emits a real `BEGIN`; subsequent nested
+calls emit a `SAVEPOINT`. `commitTx` releases the savepoint for inner
+levels and issues `COMMIT` only at the outermost level. Same logic for
+rollback (`ROLLBACK TO SAVEPOINT` vs `ROLLBACK`).
+
+```ts
+const outer = await d.beginTx()                    // BEGIN
+await d.create(UserSchema, { email: 'o@x.io' })
+
+const inner = await d.beginTx()                    // SAVEPOINT mosta_sp_2_xxxx
+await d.create(UserSchema, { email: 'i@x.io' })
+await d.rollbackTx(inner)                          // ROLLBACK TO SAVEPOINT → inner gone
+
+await d.commitTx(outer)                            // COMMIT → outer persists
+```
+
+LIFO enforcement : out-of-order commit throws with a clear message;
+out-of-order rollback is silent (caller usually already surfacing its
+own error).
+
+### Dialect-specific savepoint overrides
+
+- **MSSQL / Sybase** : `SAVE TRANSACTION` / `ROLLBACK TRANSACTION`
+  (no RELEASE equivalent — auto-released at outer COMMIT).
+- **Spanner** : savepoints not supported. `beginTx` throws a clear error
+  when attempting to nest — flatten the flow or use `$transaction(cb)`
+  once at the outer level.
+- **Oracle / DB2 / HANA / PG / MySQL / MariaDB / SQLite / HSQLDB /
+  CockroachDB** : standard `SAVEPOINT` / `RELEASE SAVEPOINT` /
+  `ROLLBACK TO SAVEPOINT` (inherited from AbstractSqlDialect).
+
+### Tests
+
+`test-manual-transactions.ts` in `@mostajs/orm-bridge`
+(SQLite) — **21/21 passing**. Covers : commit path, rollback path,
+multi-function flow, outer try/catch integration, 5 sequential cycles,
+`$transaction(cb)` delegation, out-of-order commit rejection, 2-level
+nesting, 3-level nesting. Full bridge regression suite : 8/8 test files
+green.
+
+### Implementation note — `$transaction` now delegates
+
+Since 1.11.0 the `$transaction(cb)` wrapper internally calls `beginTx`
+→ `commitTx` / `rollbackTx` instead of issuing `BEGIN` / `COMMIT`
+directly. Dialects only need to override the savepoint hooks (or the
+`beginSql/commitSql/rollbackSql` hooks) once to get both flavours
+behaving consistently.
+
 ## [1.10.8] — 2026-04-15
 
 ### Fixed — `$transaction` BEGIN keyword on Oracle / DB2 / HANA

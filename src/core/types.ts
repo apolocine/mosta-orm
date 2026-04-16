@@ -303,6 +303,30 @@ export interface ConnectionConfig {
   options?: Record<string, unknown>;
 }
 
+/**
+ * Opaque handle returned by `dialect.beginTx()`. Pass it back to
+ * `dialect.commitTx(tx)` or `dialect.rollbackTx(tx)` to close the
+ * transaction.
+ *
+ * Supports nested transactions via SAVEPOINTs : when `beginTx` is called
+ * while another transaction is already open on the same dialect, a new
+ * SAVEPOINT is emitted instead of a nested BEGIN (which would be
+ * rejected by most engines). `commitTx` then emits RELEASE SAVEPOINT
+ * for inner levels and COMMIT only for the outermost one. Same logic for
+ * rollback (ROLLBACK TO SAVEPOINT vs ROLLBACK).
+ */
+export interface TxHandle {
+  readonly id: string;
+  /** Wall-clock start (epoch ms) — useful for lag logging */
+  readonly startedAt: number;
+  /** 1 = outermost (real BEGIN/COMMIT), 2+ = nested (SAVEPOINT) */
+  readonly depth: number;
+  /** Savepoint name (only set for nested transactions, depth > 1) */
+  readonly savepointName?: string;
+  /** Internal : opaque payload carried by dialects that need pool client refs */
+  readonly _internal?: Record<string, unknown>;
+}
+
 export interface IDialect {
   readonly dialectType: DialectType;
 
@@ -457,6 +481,41 @@ export interface IDialect {
     cb: (tx: IDialect) => Promise<T>,
     opts?: { isolation?: 'READ UNCOMMITTED' | 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE' },
   ): Promise<T>;
+
+  /**
+   * **Manual transaction API (since 1.11.0, experimental).**
+   *
+   * Use this trio when the `$transaction(cb)` callback pattern is too
+   * restrictive — for instance when your transaction spans several
+   * unrelated functions, or when COMMIT/ROLLBACK depends on an external
+   * event that doesn't fit in a single callback.
+   *
+   * ```ts
+   * const tx = await dialect.beginTx();
+   * try {
+   *   await dialect.create(UserSchema, { email: 'a@b.c' });
+   *   await doSomethingElse();                       // external flow
+   *   if (shouldKeep) await dialect.commitTx(tx);
+   *   else            await dialect.rollbackTx(tx);
+   * } catch (e) {
+   *   await dialect.rollbackTx(tx);
+   *   throw e;
+   * }
+   * ```
+   *
+   * The same pool-awareness caveat applies as for `$transaction` : on
+   * pooled SQL dialects, queries between `beginTx` and `commitTx` may
+   * hit different pool clients unless `poolSize: 1`. Strict correctness
+   * requires dialect-specific overrides (planned 1.12).
+   *
+   * MongoDB : not implemented in 1.11 — use `$transaction(cb)` instead
+   * (session threading through every op is non-trivial).
+   */
+  beginTx?(opts?: {
+    isolation?: 'READ UNCOMMITTED' | 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE';
+  }): Promise<TxHandle>;
+  commitTx?(tx: TxHandle): Promise<void>;
+  rollbackTx?(tx: TxHandle): Promise<void>;
 
   // --- Schema management ---
   /** Drop a single table by name */
