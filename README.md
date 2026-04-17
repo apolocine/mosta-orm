@@ -1,13 +1,45 @@
 # @mostajs/orm
 
-> **Hibernate-inspired multi-dialect ORM for Node.js/TypeScript** — one API, **13 databases**, zero lock-in, bundler-friendly.
+> **Plug & Play ORM to Drive 13 Databases at Once**
 
 [![npm version](https://img.shields.io/npm/v/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
 
+Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — one API, **13 databases**, zero lock-in, bundler-friendly.
+
 ## Databases
 
 SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · CockroachDB · DB2 · SAP HANA · HSQLDB · Spanner · Sybase
+
+---
+
+## Demos
+
+### 1. Initialize the app
+
+<video src="assets/demo/01-init-app.mp4" width="100%" autoplay loop muted></video>
+
+### 2. Initialize the database
+
+<video src="assets/demo/02-init-db.mp4" width="100%" autoplay loop muted></video>
+
+### 3. Configure the app
+
+<video src="assets/demo/03-config-app.mp4" width="100%" autoplay loop muted></video>
+
+### 4. Setup replication
+
+<video src="assets/demo/04-init-replicat.mp4" width="100%" autoplay loop muted></video>
+
+### 5. CDC rules & live sync
+
+<video src="assets/demo/05-replicat-cdc.mp4" width="100%" autoplay loop muted></video>
+
+### 6. Frontend CRUD app
+
+<video src="assets/demo/06-frontend-app.mp4" width="100%" autoplay loop muted></video>
+
+---
 
 ## Install
 
@@ -210,9 +242,14 @@ const conn = getNamedConnection('audit')
 
 ## Ecosystem
 
-- **[@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge)** — keep your Prisma code, run it on any of the 13 databases (`createPrismaLikeDb()` is a drop-in replacement for `new PrismaClient()`).
-- **[@mostajs/orm-cli](https://www.npmjs.com/package/@mostajs/orm-cli)** — `npx @mostajs/orm-cli bootstrap` migrates a Prisma project automatically (codemod + install + convert + DDL).
-- **[@mostajs/orm-adapter](https://www.npmjs.com/package/@mostajs/orm-adapter)** — convert Prisma / JSON Schema / OpenAPI to `EntitySchema[]`.
+| Package | Description |
+|---|---|
+| [@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge) | Keep your Prisma code, run it on any of the 13 databases (`createPrismaLikeDb()` is a drop-in replacement for `new PrismaClient()`). |
+| [@mostajs/orm-cli](https://www.npmjs.com/package/@mostajs/orm-cli) | `npx @mostajs/orm-cli` — interactive CLI : convert schemas, init databases, scaffold services, replicator + monitor, seeding, bootstrap Prisma migration. |
+| [@mostajs/orm-adapter](https://www.npmjs.com/package/@mostajs/orm-adapter) | Convert Prisma / JSON Schema / OpenAPI / native `.mjs` to `EntitySchema[]` (bidirectional). |
+| [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator) | Cross-dialect replication : CQRS master/slave, CDC rules (snapshot + incremental), wildcard `*`, failover (`promoteToMaster`). |
+| [@mostajs/replica-monitor](https://www.npmjs.com/package/@mostajs/replica-monitor) | Live web dashboard — replicas status, CDC stats, activity stream. Zero DB connections (reads tree + stats files). |
+| [@mostajs/media](https://www.npmjs.com/package/@mostajs/media) | Screen capture + video editor (split, speed, stickers, subtitles) + server-side ffmpeg export + project persistence (ORM + SQLite). |
 
 ## License
 

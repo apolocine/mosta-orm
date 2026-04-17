@@ -93,6 +93,13 @@ class OracleDialect extends AbstractSqlDialect {
     return null;
   }
 
+  // Oracle supports SAVEPOINT and ROLLBACK TO SAVEPOINT, but NOT
+  // RELEASE SAVEPOINT — savepoints are implicitly released at COMMIT /
+  // ROLLBACK. Returning null turns RELEASE into a no-op.
+  protected savepointReleaseSql(_name: string): string | null {
+    return null;
+  }
+
   async dropTable(tableName: string): Promise<void> {
     const sql =
       `BEGIN ` +
