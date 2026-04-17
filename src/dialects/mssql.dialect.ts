@@ -34,6 +34,19 @@ export class MSSQLDialect extends AbstractSqlDialect {
   readonly dialectType: DialectType = 'mssql';
   protected pool: unknown = null;
 
+  // --- Transaction syntax specific to SQL Server ---
+  // T-SQL : bare BEGIN is a control-flow block start, NOT a transaction start.
+  // Real transactions require BEGIN TRANSACTION (or BEGIN TRAN).
+  // COMMIT / ROLLBACK unqualified are accepted as shorthand for COMMIT/ROLLBACK
+  // TRANSACTION — so those don't need overriding.
+  // Isolation level must be set BEFORE BEGIN TRANSACTION on SQL Server.
+  protected beginSql(opts?: { isolation?: string }): string | null {
+    if (opts?.isolation) {
+      return `SET TRANSACTION ISOLATION LEVEL ${opts.isolation}; BEGIN TRANSACTION`;
+    }
+    return 'BEGIN TRANSACTION';
+  }
+
   // --- Savepoint syntax specific to SQL Server ---
   // MSSQL uses SAVE TRANSACTION / ROLLBACK TRANSACTION — no RELEASE equivalent
   // (sub-tx is auto-released when outer COMMIT fires). Return null for release.
@@ -149,14 +162,20 @@ export class MSSQLDialect extends AbstractSqlDialect {
       request(): {
         input(name: string, value: unknown): unknown;
         query(sql: string): Promise<{ recordset: T[] }>;
+        batch(sql: string): Promise<{ recordset: T[] }>;
       };
     }).request();
 
-    // Bind named parameters @p1, @p2, ...
+    // Parameterless → use batch() to avoid sp_executesql wrapping
+    // (tedious rejects statements that change @@TRANCOUNT inside a proc).
+    if (params.length === 0) {
+      const result = await request.batch(sql);
+      return result.recordset ?? [];
+    }
+
     for (let i = 0; i < params.length; i++) {
       request.input(`p${i + 1}`, params[i]);
     }
-
     const result = await request.query(sql);
     return result.recordset;
   }
@@ -167,13 +186,20 @@ export class MSSQLDialect extends AbstractSqlDialect {
       request(): {
         input(name: string, value: unknown): unknown;
         query(sql: string): Promise<{ rowsAffected: number[] }>;
+        batch(sql: string): Promise<{ rowsAffected: number[] }>;
       };
     }).request();
+
+    // Parameterless → batch(). BEGIN/COMMIT/ROLLBACK/SAVE TRANSACTION must
+    // NOT go through sp_executesql (which rejects any @@TRANCOUNT delta).
+    if (params.length === 0) {
+      const result = await request.batch(sql);
+      return { changes: result.rowsAffected?.[0] ?? 0 };
+    }
 
     for (let i = 0; i < params.length; i++) {
       request.input(`p${i + 1}`, params[i]);
     }
-
     const result = await request.query(sql);
     return { changes: result.rowsAffected?.[0] ?? 0 };
   }
