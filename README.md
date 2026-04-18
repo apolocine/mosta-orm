@@ -39,6 +39,14 @@ SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · C
 
 <video src="https://github.com/user-attachments/assets/9f78ee1b-ac9a-4d5e-ae91-1ec203e31447" width="60%" autoplay loop muted></video>
 
+### 7. Prisma project (before migration)
+
+<video src="https://github.com/user-attachments/assets/15db7457-9cae-4f51-b631-7590a20fcbbd" width="60%" autoplay loop muted></video>
+
+### 8. Prisma → @mostajs/orm migration (bootstrap)
+
+<video src="https://github.com/user-attachments/assets/ae0acd7c-43bb-4d39-84b1-9455aeb0331d" width="60%" autoplay loop muted></video>
+
 ---
 
 ## Install
