@@ -17,27 +17,27 @@ SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · C
 
 ### 1. Initialize the app
 
-https://github.com/user-attachments/assets/8f8b363e-4cc9-4b74-b1c8-d9c83b362327
+<video src="https://github.com/user-attachments/assets/8f8b363e-4cc9-4b74-b1c8-d9c83b362327" width="90%" autoplay loop muted></video>
 
 ### 2. Initialize the database
 
-https://github.com/user-attachments/assets/e96a303b-f14c-4d90-a014-ccc342f071e5
+<video src="https://github.com/user-attachments/assets/e96a303b-f14c-4d90-a014-ccc342f071e5" width="90%" autoplay loop muted></video>
 
 ### 3. Configure the app
 
-https://github.com/user-attachments/assets/5a344a63-f1a5-426a-96d2-11f8816c2f53
+<video src="https://github.com/user-attachments/assets/5a344a63-f1a5-426a-96d2-11f8816c2f53" width="90%" autoplay loop muted></video>
 
 ### 4. Setup replication
 
-https://github.com/user-attachments/assets/201f4a35-0c21-45d7-8df5-0554c68a2b5b
+<video src="https://github.com/user-attachments/assets/201f4a35-0c21-45d7-8df5-0554c68a2b5b" width="90%" autoplay loop muted></video>
 
 ### 5. CDC rules & live sync
 
-https://github.com/user-attachments/assets/d30674c1-4379-46c8-95f3-8f0f4b883df1
+<video src="https://github.com/user-attachments/assets/d30674c1-4379-46c8-95f3-8f0f4b883df1" width="90%" autoplay loop muted></video>
 
 ### 6. Frontend CRUD app
 
-https://github.com/user-attachments/assets/9f78ee1b-ac9a-4d5e-ae91-1ec203e31447
+<video src="https://github.com/user-attachments/assets/9f78ee1b-ac9a-4d5e-ae91-1ec203e31447" width="90%" autoplay loop muted></video>
 
 ---
 
