@@ -17,11 +17,11 @@ SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · C
 
 ### 1. Initialize the app
 
-<video src="assets/demo/01-init-app.mp4" width="100%" autoplay loop muted></video>
+<video src="[assets/demo/01-init-app.mp4](https://github.com/user-attachments/assets/8f8b363e-4cc9-4b74-b1c8-d9c83b362327)" width="100%" autoplay loop muted></video>
 
 ### 2. Initialize the database
 
-<video src="assets/demo/02-init-db.mp4" width="100%" autoplay loop muted></video>
+<video src="https://github.com/user-attachments/assets/e96a303b-f14c-4d90-a014-ccc342f071e5" width="100%" autoplay loop muted></video>
 
 ### 3. Configure the app
 
