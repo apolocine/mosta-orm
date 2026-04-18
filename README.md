@@ -17,7 +17,7 @@ SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · C
 
 ### 1. Initialize the app
 
-<video src="https://github.com/user-attachments/assets/8f8b363e-4cc9-4b74-b1c8-d9c83b362327" width="80%" autoplay loop muted></video>
+<video src="https://github.com/user-attachments/assets/8f8b363e-4cc9-4b74-b1c8-d9c83b362327" width="60%" autoplay loop muted></video>
 
 ### 2. Initialize the database
 
