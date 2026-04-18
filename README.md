@@ -31,7 +31,7 @@ SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · C
 
 <video src="https://github.com/user-attachments/assets/201f4a35-0c21-45d7-8df5-0554c68a2b5b" width="60%" autoplay loop muted></video>
 
-### 5. CDC rules & live sync
+### 5. Cross-dialect CDC rules & live sync
 
 <video src="https://github.com/user-attachments/assets/d30674c1-4379-46c8-95f3-8f0f4b883df1" width="60%" autoplay loop muted></video>
 
