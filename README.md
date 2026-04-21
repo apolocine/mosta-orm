@@ -188,7 +188,62 @@ DB_SCHEMA_STRATEGY=update    # validate | update | create | create-drop | none
 DB_SHOW_SQL=true
 ```
 
+The naming mirrors Hibernate's `hibernate.hbm2ddl.auto` / `hibernate.show_sql`
+properties (see [Hibernate User Guide § schema strategies](https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html#schema-generation)). Values have identical semantics : `validate` /
+`update` / `create` / `create-drop` / `none`.
+
 The dialect matching `DB_DIALECT` is **lazy-loaded at runtime** (v1.9.3+). Only the driver you actually use is evaluated — no other dialect module enters your bundle. This is what makes @mostajs/orm safe to pull into a Next.js / Vite / SvelteKit project without bundler workarounds.
+
+### Profile cascade with `MOSTA_ENV` (v1.13+)
+
+Powered by [`@mostajs/config`](https://www.npmjs.com/package/@mostajs/config).
+Keep **one** `.env` file with profile-prefixed overrides and switch via a
+single `MOSTA_ENV` variable — exactly like [Spring Boot profiles](https://docs.spring.io/spring-boot/reference/features/profiles.html)
+(`spring.profiles.active=test` loading `application-test.properties`).
+
+```bash
+# .env — committed (non-secret) defaults
+MOSTA_ENV=TEST
+
+# Base defaults (used when no profile, or as fallback)
+DB_DIALECT=sqlite
+SGBD_URI=./data.sqlite
+
+# Profile overrides
+TEST_DB_DIALECT=sqlite
+TEST_SGBD_URI=./test.sqlite
+TEST_DB_SCHEMA_STRATEGY=create-drop
+
+DEV_DB_DIALECT=postgres
+DEV_SGBD_URI=postgres://localhost:5432/devdb
+DEV_DB_SCHEMA_STRATEGY=update
+
+PROD_DB_DIALECT=mongodb
+PROD_SGBD_URI=${SCALEWAY_MONGO_URI}    # secret injected by orchestrator
+PROD_DB_SCHEMA_STRATEGY=validate
+```
+
+**Resolution cascade** (first non-empty wins) :
+
+1. `${MOSTA_ENV}_${KEY}` — profile-prefixed
+2. `${KEY}` — plain
+3. `fallback` argument
+4. `undefined` — no crash, caller decides whether that's fatal
+
+Silent fallback is guaranteed : a missing profile override never throws, it
+just falls through to the plain variable or to the default. Empty strings
+(`TEST_DB_DIALECT=`) are treated as "not set" so they don't silently leak a
+blank value.
+
+For generic use outside `@mostajs/orm`, import directly from the config
+package :
+
+```ts
+import { getEnv, getEnvBool, getEnvNumber, getCurrentProfile } from '@mostajs/config'
+
+const url = getEnv('REDIS_URL', 'redis://localhost:6379')
+console.log(`Profile : ${getCurrentProfile() ?? 'none'}`)
+```
 
 ## Switch databases with one env var
 
@@ -255,10 +310,50 @@ const conn = getNamedConnection('audit')
 | [@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge) | Keep your Prisma code, run it on any of the 13 databases (`createPrismaLikeDb()` is a drop-in replacement for `new PrismaClient()`). |
 | [@mostajs/orm-cli](https://www.npmjs.com/package/@mostajs/orm-cli) | `npx @mostajs/orm-cli` — interactive CLI : convert schemas, init databases, scaffold services, replicator + monitor, seeding, bootstrap Prisma migration. |
 | [@mostajs/orm-adapter](https://www.npmjs.com/package/@mostajs/orm-adapter) | Convert Prisma / JSON Schema / OpenAPI / native `.mjs` to `EntitySchema[]` (bidirectional). |
-| [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator) | Cross-dialect replication : CQRS master/slave, CDC rules (snapshot + incremental), wildcard `*`, failover (`promoteToMaster`). Mongo FK columns accept UUID strings coming from SQL dialects (populate falls back to `{ id: uuid }` lookup). |
+| [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator) | Cross-dialect replication : CQRS master/slave, CDC rules (snapshot + incremental), wildcard `*`, failover (`promoteToMaster`). As of @mostajs/orm v1.13, Mongo FK columns accept UUID strings coming from SQL dialects (populate falls back to `{ id: uuid }` lookup). |
 | [@mostajs/orm-copy-data](https://www.npmjs.com/package/@mostajs/orm-copy-data) | Cross-dialect data copy : 1 source (DB / CSV / JSON / SQL dump) → N destinations. Backup, migration, seeding. CLI (`mostajs-copy`) + API. Cron-ready. |
 | [@mostajs/replica-monitor](https://www.npmjs.com/package/@mostajs/replica-monitor) | Live web dashboard — replicas status, CDC stats, activity stream. Zero DB connections (reads tree + stats files). |
 | [@mostajs/media](https://www.npmjs.com/package/@mostajs/media) | Screen capture + video editor (split, speed, stickers, subtitles) + server-side ffmpeg export + project persistence (ORM + SQLite). |
+| [@mostajs/config](https://www.npmjs.com/package/@mostajs/config) | Env loader with `MOSTA_ENV` profile cascade (Spring-Boot-style). Used by orm/auth/payment/music. |
+
+## Design inspirations
+
+`@mostajs/orm` draws from three decades of mature ORM engineering in the
+Java ecosystem, adapted to the TypeScript / Node.js runtime :
+
+| Borrowed concept | Source | @mostajs/orm equivalent |
+|---|---|---|
+| `SessionFactory` / `EntityManagerFactory` | [Hibernate](https://hibernate.org/orm/documentation/) · [JPA](https://jakarta.ee/specifications/persistence/) | `getDialect()` returning a cached singleton |
+| Entity metadata (annotations / XML) | Hibernate, [JPA `@Entity`](https://jakarta.ee/specifications/persistence/3.1/apidocs/jakarta.persistence/jakarta/persistence/entity) | `EntitySchema` — declarative TypeScript schema |
+| `@OneToMany` / `@ManyToOne` / `@OneToOne` / `@ManyToMany` | JPA | `relations: { ..., type: 'one-to-many' \| ... }` |
+| `@JoinColumn`, `@JoinTable` | JPA | `joinColumn`, `through` |
+| `CascadeType` / `FetchType` | JPA | `cascade`, `fetch` in `RelationDef` |
+| Cascade types (`PERSIST`, `REMOVE`, `ALL`) | JPA | `cascade: ['persist', 'remove', 'all']` |
+| Schema-generation strategies (`validate`, `update`, `create`, `create-drop`) | [Hibernate `hibernate.hbm2ddl.auto`](https://docs.jboss.org/hibernate/orm/current/userguide/html_single/Hibernate_User_Guide.html#schema-generation) | `DB_SCHEMA_STRATEGY` (same names, same semantics) |
+| Show-SQL / format-SQL / highlight-SQL | Hibernate (`hibernate.show_sql`, `hibernate.format_sql`) | `DB_SHOW_SQL`, `DB_FORMAT_SQL`, `DB_HIGHLIGHT_SQL` |
+| `SAVEPOINT` for nested transactions | SQL standard, JPA spec | `beginTx()` inside `beginTx()` emits `SAVEPOINT` |
+| Repository pattern | [Spring Data](https://spring.io/projects/spring-data) | `BaseRepository<T>` with typed CRUD |
+| Profile-based configuration | [Spring Boot profiles](https://docs.spring.io/spring-boot/reference/features/profiles.html) (`spring.profiles.active=test`) | `MOSTA_ENV=TEST` + `TEST_KEY=value` cascade (via `@mostajs/config`) |
+| Environment-aware externalized config | [Spring Boot `application-${profile}.properties`](https://docs.spring.io/spring-boot/reference/features/external-config.html) | One `.env` with `${PROFILE}_${KEY}` overrides |
+
+### Why borrow from the Java ecosystem ?
+
+Hibernate (2001), JPA (2006, JSR 220), Spring Data (2008), Spring Boot (2014)
+have collectively survived two decades of production workloads. Their
+vocabulary and semantics are **industry defaults** : developers who have
+worked with any of them recognize `@OneToMany`, `CascadeType.ALL`,
+`spring.profiles.active`, `hibernate.hbm2ddl.auto=update`, `SAVEPOINT`,
+etc. immediately. Reusing those names in `@mostajs/orm` cuts the learning
+curve and avoids inventing a parallel dialect.
+
+Further reading :
+
+- Hibernate ORM — https://hibernate.org/orm/documentation/
+- Jakarta Persistence (JPA) — https://jakarta.ee/specifications/persistence/
+- Spring Framework — https://spring.io/projects/spring-framework
+- Spring Data — https://spring.io/projects/spring-data
+- Spring Boot profiles — https://docs.spring.io/spring-boot/reference/features/profiles.html
+- Spring Boot externalized configuration — https://docs.spring.io/spring-boot/reference/features/external-config.html
 
 ## License
 

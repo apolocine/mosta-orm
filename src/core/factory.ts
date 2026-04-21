@@ -9,6 +9,7 @@ import { dirname, resolve as pathResolve } from 'path';
 import type { IDialect, DialectType, ConnectionConfig, EntitySchema } from './types.js';
 import { getDialectConfig, getSupportedDialects } from './config.js';
 import { getAllSchemas, registerSchemas } from './registry.js';
+import { getEnv, getEnvBool, getEnvNumber, getCurrentProfile } from '@mostajs/config';
 
 /** Singleton dialect instance */
 let currentDialect: IDialect | null = null;
@@ -66,19 +67,33 @@ async function loadDialectModule(dialect: DialectType): Promise<{ createDialect:
 /**
  * Read the database configuration from environment variables.
  *
- * Required env vars:
- *   DB_DIALECT  = mongodb | sqlite | postgres | mysql | mariadb | oracle | mssql | cockroachdb | db2 | hana | hsqldb | spanner | sybase
+ * Resolution cascade : if `MOSTA_ENV` is set (e.g. `TEST`, `DEV`, `PROD`),
+ * profile-prefixed variables override their plain counterparts.
+ *
+ *   MOSTA_ENV=TEST
+ *   TEST_DB_DIALECT=sqlite   ← used
+ *   DB_DIALECT=postgres      ← ignored when profile override exists
+ *
+ * Missing profile overrides silently fall back to the plain variables.
+ *
+ * Required (after cascade) :
+ *   DB_DIALECT  = mongodb | sqlite | postgres | mysql | mariadb | oracle |
+ *                 mssql | cockroachdb | db2 | hana | hsqldb | spanner | sybase
  *   SGBD_URI    = connection string
  *
- * Throws if DB_DIALECT or SGBD_URI is missing.
+ * Throws if DB_DIALECT or SGBD_URI is missing (both profiled and plain).
  */
 export function getConfigFromEnv(): ConnectionConfig {
-  const dialect = process.env.DB_DIALECT as DialectType | undefined;
-  const uri = process.env.SGBD_URI;
+  const dialect = getEnv('DB_DIALECT') as DialectType | undefined;
+  const uri = getEnv('SGBD_URI');
+  const profile = getCurrentProfile();
 
   if (!dialect) {
+    const hint = profile
+      ? `\nActive profile: MOSTA_ENV=${profile} — expected ${profile}_DB_DIALECT or DB_DIALECT`
+      : '';
     throw new Error(
-      'DB_DIALECT is not defined in environment\n' +
+      'DB_DIALECT is not defined in environment' + hint + '\n' +
       `Supported: ${getSupportedDialects().join(', ')}`
     );
   }
@@ -87,8 +102,11 @@ export function getConfigFromEnv(): ConnectionConfig {
   getDialectConfig(dialect);
 
   if (!uri) {
+    const hint = profile
+      ? `\nActive profile: MOSTA_ENV=${profile} — expected ${profile}_SGBD_URI or SGBD_URI`
+      : '';
     throw new Error(
-      `SGBD_URI is not defined in environment\n` +
+      `SGBD_URI is not defined in environment` + hint + '\n' +
       `DB_DIALECT=${dialect} requires a connection string in SGBD_URI`
     );
   }
@@ -96,15 +114,15 @@ export function getConfigFromEnv(): ConnectionConfig {
   return {
     dialect,
     uri,
-    // Hibernate-inspired properties from env
-    showSql:        process.env.DB_SHOW_SQL === 'true',
-    formatSql:      process.env.DB_FORMAT_SQL === 'true',
-    highlightSql:   process.env.DB_HIGHLIGHT_SQL === 'true',
-    schemaStrategy: (process.env.DB_SCHEMA_STRATEGY as ConnectionConfig['schemaStrategy']) || 'none',
-    poolSize:       process.env.DB_POOL_SIZE ? Number(process.env.DB_POOL_SIZE) : undefined,
-    cacheEnabled:   process.env.DB_CACHE_ENABLED === 'true',
-    cacheTtlSeconds: process.env.DB_CACHE_TTL ? Number(process.env.DB_CACHE_TTL) : undefined,
-    batchSize:      process.env.DB_BATCH_SIZE ? Number(process.env.DB_BATCH_SIZE) : undefined,
+    // Hibernate-inspired properties from env (with profile cascade)
+    showSql:         getEnvBool('DB_SHOW_SQL', false),
+    formatSql:       getEnvBool('DB_FORMAT_SQL', false),
+    highlightSql:    getEnvBool('DB_HIGHLIGHT_SQL', false),
+    schemaStrategy:  (getEnv('DB_SCHEMA_STRATEGY', 'none')) as ConnectionConfig['schemaStrategy'],
+    poolSize:        getEnvNumber('DB_POOL_SIZE'),
+    cacheEnabled:    getEnvBool('DB_CACHE_ENABLED', false),
+    cacheTtlSeconds: getEnvNumber('DB_CACHE_TTL'),
+    batchSize:       getEnvNumber('DB_BATCH_SIZE'),
   };
 }
 
@@ -145,10 +163,11 @@ export async function getDialect(config?: ConnectionConfig): Promise<IDialect> {
 
 /**
  * Get the current dialect type without connecting.
+ * Respects MOSTA_ENV profile cascade.
  */
 export function getCurrentDialectType(): DialectType {
   if (currentConfig) return currentConfig.dialect;
-  return process.env.DB_DIALECT as DialectType || 'mongodb';
+  return (getEnv('DB_DIALECT') as DialectType) || 'mongodb';
 }
 
 /**

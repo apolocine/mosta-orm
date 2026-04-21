@@ -1,6 +1,6 @@
 {
   "name": "@mostajs/orm",
-  "version": "1.11.0",
+  "version": "1.13.0",
   "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
   "license": "AGPL-3.0-or-later",
@@ -27,9 +27,7 @@
   },
   "files": [
     "dist",
-    "bridge",
-    "jar_files",
-    "docs",
+    "bridge/MostaJdbcBridge.java",
     "wire.json",
     "LICENSE",
     "README.md"
@@ -69,6 +67,9 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@mostajs/config": "^1.0.0"
   },
   "peerDependencies": {
     "@google-cloud/spanner": ">=7.0.0",
