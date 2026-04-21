@@ -781,7 +781,8 @@ export abstract class AbstractSqlDialect implements IDialect {
         columns.push(colName);
         placeholders.push(this.nextPlaceholder());
         // Empty string → null for FK columns (avoids FOREIGN KEY constraint failures)
-        values.push(data[name] || null);
+        // Use ?? instead of || to preserve falsy-but-valid values (0, false)
+        values.push(data[name] === '' ? null : (data[name] ?? null));
       }
     }
 
@@ -836,7 +837,7 @@ export abstract class AbstractSqlDialect implements IDialect {
         const colName = rel.joinColumn || key;
         setClauses.push(`${this.quoteIdentifier(colName)} = ${this.nextPlaceholder()}`);
         // Empty string → null for FK columns (avoids FOREIGN KEY constraint failures)
-        values.push(val || null);
+        values.push(val === '' ? null : (val ?? null));
       } else if (key === 'createdAt' || key === 'updatedAt') {
         setClauses.push(`${this.quoteIdentifier(key)} = ${this.nextPlaceholder()}`);
         values.push(this.serializeDate(val));
@@ -885,6 +886,7 @@ export abstract class AbstractSqlDialect implements IDialect {
       // M2O / O2O: FK column on this table
       let colDef = `  ${q(rel.joinColumn || name)} ${this.getIdColumnType()}`;
       if (rel.required) colDef += ' NOT NULL';
+      if (rel.type === 'one-to-one') colDef += ' UNIQUE';
       cols.push(colDef);
     }
 
@@ -1096,7 +1098,8 @@ export abstract class AbstractSqlDialect implements IDialect {
       if (rel.type !== 'many-to-one' && rel.type !== 'one-to-one') continue;
       const colName = rel.joinColumn || name;
       if (has(colName)) continue;
-      const sql = `ALTER TABLE ${q(schema.collection)} ADD ${q(colName)} ${this.getIdColumnType()}`;
+      const unique = rel.type === 'one-to-one' ? ' UNIQUE' : '';
+      const sql = `ALTER TABLE ${q(schema.collection)} ADD ${q(colName)} ${this.getIdColumnType()}${unique}`;
       try {
         this.log('DDL_ALTER_ADD_FK', `${schema.collection}.${colName}`, sql);
         await this.executeRun(sql, []);

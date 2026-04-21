@@ -2,6 +2,36 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [Unreleased]
+
+### Fixed — SQL dialect : FK columns preserve falsy-but-valid values (0, false)
+
+Replaced the `data[name] || null` short-circuit by
+`data[name] === '' ? null : (data[name] ?? null)` in `AbstractSqlDialect.insert`
+and `AbstractSqlDialect.update`. The previous logic silently replaced valid
+falsy values (numeric `0`, boolean `false`) with `null`, breaking FK writes
+whose `id = 0` was legitimate.
+
+### Added — SQL dialect : UNIQUE constraint on one-to-one FK columns
+
+Relations declared as `type: 'one-to-one'` now get a column-level `UNIQUE`
+constraint at `CREATE TABLE` and at `ALTER TABLE ADD` time. Matches the JPA
+semantics where an O2O FK must be injective.
+
+### Fixed — Mongo dialect : accepts UUID strings in FK (cross-dialect replication)
+
+When a record originates from a SQL dialect (SQLite/Postgres/…) that uses
+**UUID** primary keys, the replicated Mongo document stores the FK as a
+string rather than a native `ObjectId`. Two changes :
+
+1. FK fields in the Mongoose schema now use `Schema.Types.Mixed` instead of
+   `ObjectId`, accepting both `ObjectId` and UUID-string values.
+2. When Mongoose `populate()` returns `null` (because the ref lookup expects
+   `_id` matching the FK's type), the dialect falls back to
+   `findOne({ id: fkValue })` on the target collection.
+
+Unblocks `@mostajs/replicator` for bidirectional SQL ↔ Mongo sync.
+
 ## [1.11.0] — 2026-04-16
 
 ### Added — Manual transaction API (`beginTx` / `commitTx` / `rollbackTx`)
