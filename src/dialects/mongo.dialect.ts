@@ -106,15 +106,17 @@ function buildMongooseSchema(entity: EntitySchema): Schema {
     definition[name] = schemaDef;
   }
 
-  // --- Relations → ObjectId refs ---
+  // --- Relations → refs ---
+  // Use Schema.Types.Mixed instead of ObjectId for FK fields so that
+  // both MongoDB ObjectIds AND UUID strings (from SQL dialects) are
+  // accepted. This is critical for cross-dialect replication where the
+  // source DB uses UUIDs (SQLite, Postgres, etc.) and the target is Mongo.
   for (const [name, rel] of Object.entries(entity.relations)) {
     if (rel.type === 'one-to-many' || rel.type === 'many-to-many') {
-      // Array of refs (e.g. Role.permissions, User.roles)
-      definition[name] = [{ type: Schema.Types.ObjectId, ref: rel.target }];
+      definition[name] = [{ type: Schema.Types.Mixed, ref: rel.target }];
     } else {
-      // many-to-one or one-to-one → single ref
       definition[name] = {
-        type: Schema.Types.ObjectId,
+        type: Schema.Types.Mixed,
         ref: rel.target,
         ...(rel.required && { required: true }),
         ...(rel.nullable && { default: null }),
@@ -555,9 +557,14 @@ class MongoDialect implements IDialect {
     const o2mRels = relations.filter(r => schema.relations[r]?.type === 'one-to-many');
     const populateRels = relations.filter(r => schema.relations[r]?.type !== 'one-to-many');
 
+    // Query WITHOUT populate first — we need the raw FK values for UUID fallback
+    let rawQuery = model.find(mongoFilter);
+    rawQuery = applyOptions(rawQuery, options);
+    const rawDocs = await rawQuery.lean();
+
+    // Now query WITH populate for m2o/o2o/m2m
     let query = model.find(mongoFilter);
     query = applyOptions(query, options);
-
     for (const rel of populateRels) {
       const relDef = schema.relations[rel];
       if (relDef?.select) {
@@ -569,6 +576,27 @@ class MongoDialect implements IDialect {
 
     const docs = await query.lean();
     const normalized = this.normalize<Record<string, unknown>[]>(docs);
+
+    // Fallback for populate that returned null — happens when FK is a UUID
+    // string (from SQL dialect replication) but Mongoose resolves refs via
+    // _id (ObjectId). Fall back to findOne({ id: fkValue }) on the target.
+    for (const doc of normalized) {
+      for (const rel of populateRels) {
+        if (doc[rel] !== null && doc[rel] !== undefined) continue;
+        const relDef = schema.relations[rel];
+        if (!relDef) continue;
+        // Find the raw FK value from the un-populated query
+        const rawDoc = (rawDocs as Record<string, unknown>[]).find(
+          (r: Record<string, unknown>) => String((r as Record<string, unknown>)._id ?? (r as Record<string, unknown>).id) === String(doc.id)
+        );
+        const rawFk = rawDoc?.[rel];
+        if (rawFk && typeof rawFk === 'string') {
+          const targetModel = getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false });
+          const found = await targetModel.findOne({ id: rawFk }).lean();
+          if (found) doc[rel] = this.normalize(found as Record<string, unknown>);
+        }
+      }
+    }
 
     // O2M: query child collection by FK for each doc
     if (o2mRels.length > 0) {
@@ -601,9 +629,11 @@ class MongoDialect implements IDialect {
     const o2mRels = relations.filter(r => schema.relations[r]?.type === 'one-to-many');
     const populateRels = relations.filter(r => schema.relations[r]?.type !== 'one-to-many');
 
+    // Raw query (without populate) for UUID FK fallback
+    const rawDoc = await model.findOne(mongoFilter).lean();
+
     let query = model.findOne(mongoFilter);
     query = applyOptions(query, options);
-
     for (const rel of populateRels) {
       const relDef = schema.relations[rel];
       if (relDef?.select) {
@@ -616,6 +646,19 @@ class MongoDialect implements IDialect {
     const doc = await query.lean();
     if (!doc) return null;
     const normalized = this.normalize<Record<string, unknown>>(doc);
+
+    // Fallback for populate null — UUID FK from SQL replication
+    for (const rel of populateRels) {
+      if (normalized[rel] !== null && normalized[rel] !== undefined) continue;
+      const relDef = schema.relations[rel];
+      if (!relDef) continue;
+      const rawFk = (rawDoc as Record<string, unknown> | null)?.[rel];
+      if (rawFk && typeof rawFk === 'string') {
+        const targetModel = getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false });
+        const found = await targetModel.findOne({ id: rawFk }).lean();
+        if (found) normalized[rel] = this.normalize(found as Record<string, unknown>);
+      }
+    }
 
     // O2M: query child collection by FK
     for (const rel of o2mRels) {

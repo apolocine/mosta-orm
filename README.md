@@ -255,7 +255,8 @@ const conn = getNamedConnection('audit')
 | [@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge) | Keep your Prisma code, run it on any of the 13 databases (`createPrismaLikeDb()` is a drop-in replacement for `new PrismaClient()`). |
 | [@mostajs/orm-cli](https://www.npmjs.com/package/@mostajs/orm-cli) | `npx @mostajs/orm-cli` — interactive CLI : convert schemas, init databases, scaffold services, replicator + monitor, seeding, bootstrap Prisma migration. |
 | [@mostajs/orm-adapter](https://www.npmjs.com/package/@mostajs/orm-adapter) | Convert Prisma / JSON Schema / OpenAPI / native `.mjs` to `EntitySchema[]` (bidirectional). |
-| [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator) | Cross-dialect replication : CQRS master/slave, CDC rules (snapshot + incremental), wildcard `*`, failover (`promoteToMaster`). |
+| [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator) | Cross-dialect replication : CQRS master/slave, CDC rules (snapshot + incremental), wildcard `*`, failover (`promoteToMaster`). Mongo FK columns accept UUID strings coming from SQL dialects (populate falls back to `{ id: uuid }` lookup). |
+| [@mostajs/orm-copy-data](https://www.npmjs.com/package/@mostajs/orm-copy-data) | Cross-dialect data copy : 1 source (DB / CSV / JSON / SQL dump) → N destinations. Backup, migration, seeding. CLI (`mostajs-copy`) + API. Cron-ready. |
 | [@mostajs/replica-monitor](https://www.npmjs.com/package/@mostajs/replica-monitor) | Live web dashboard — replicas status, CDC stats, activity stream. Zero DB connections (reads tree + stats files). |
 | [@mostajs/media](https://www.npmjs.com/package/@mostajs/media) | Screen capture + video editor (split, speed, stickers, subtitles) + server-side ffmpeg export + project persistence (ORM + SQLite). |
 
