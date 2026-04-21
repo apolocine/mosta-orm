@@ -2,7 +2,11 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
-## [Unreleased]
+## [1.13.0] — 2026-04-21
+
+Three independent improvement groups shipped together : **SQL FK correctness**,
+**cross-dialect replication hardening (Mongo)**, and **profile-based config
+cascade** via the new `@mostajs/config` package.
 
 ### Fixed — SQL dialect : FK columns preserve falsy-but-valid values (0, false)
 
@@ -31,6 +35,40 @@ string rather than a native `ObjectId`. Two changes :
    `findOne({ id: fkValue })` on the target collection.
 
 Unblocks `@mostajs/replicator` for bidirectional SQL ↔ Mongo sync.
+
+### Added — `MOSTA_ENV` profile cascade via `@mostajs/config`
+
+Environment variables now support profile-based overrides. Set `MOSTA_ENV=TEST`
+and any `TEST_DB_DIALECT` / `TEST_SGBD_URI` / etc. takes priority over plain
+`DB_DIALECT` / `SGBD_URI`. If a profile override is absent, lookup silently
+falls back to the plain variable — no crash on missing optional keys.
+
+```bash
+# .env
+MOSTA_ENV=TEST
+DB_DIALECT=postgres            # default
+TEST_DB_DIALECT=sqlite         # TEST override
+TEST_SGBD_URI=./test.sqlite
+# No TEST_DB_SCHEMA_STRATEGY → falls back to DB_SCHEMA_STRATEGY or 'none'
+```
+
+Affects `getConfigFromEnv()` and `getCurrentDialectType()`.
+
+This matches the well-known **Spring Boot profiles** pattern
+(`spring.profiles.active=test` loading `application-test.properties`).
+
+### Added — new dependency `@mostajs/config ^1.0.0`
+
+The env loader has been extracted to a standalone package so other MostaJS
+packages (`@mostajs/auth`, `@mostajs/payment`, `@mostajs/music`, …) can use
+the same profile cascade.
+
+```ts
+import { getEnv, getEnvBool, getEnvNumber, getCurrentProfile } from '@mostajs/config';
+```
+
+The helpers are also re-exported from `@mostajs/orm` for convenience and
+backward compatibility with the 1.13-alpha preview.
 
 ## [1.11.0] — 2026-04-16
 

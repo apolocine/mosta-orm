@@ -85,6 +85,18 @@ export {
 } from './core/factory.js';
 
 // ============================================================
+// Env loader with MOSTA_ENV profile cascade
+// Re-exported from @mostajs/config for convenience (since v1.13.0).
+// For new code, prefer importing directly from '@mostajs/config'.
+// ============================================================
+export {
+  getEnv,
+  getEnvBool,
+  getEnvNumber,
+  getCurrentProfile,
+} from '@mostajs/config';
+
+// ============================================================
 // Base Repository
 // ============================================================
 export { BaseRepository } from './core/base-repository.js';
