@@ -290,6 +290,45 @@ await dialect.dropSchema?.(getAllSchemas())
 await dialect.dropAllTables?.()
 ```
 
+## Dialect-level guarantees (v1.13+)
+
+Two classes of correctness fixes ship with 1.13, both driven by real
+production pain encountered during `@mostajs/replicator` runs.
+
+### SQL dialects (`AbstractSqlDialect`)
+
+- **FK columns preserve falsy-but-valid values (`0`, `false`).** The previous
+  short-circuit `data[name] || null` silently replaced legitimate zero IDs
+  and boolean `false` with `null`, breaking FK writes whose source-side PK
+  happened to be `0`. The insert/update path now uses
+  `value === '' ? null : (value ?? null)` — empty strings still null-out
+  (SQL foreign-key constraints reject them on most dialects) but numeric
+  zero, `false` and any non-empty value round-trip intact.
+- **One-to-one relations get a column-level `UNIQUE` constraint.** Emitted
+  both at `CREATE TABLE` time and at `ALTER TABLE ADD` time when growing
+  an existing schema. Matches the JPA / Hibernate semantics where an
+  `@OneToOne` FK must be injective (otherwise the "one" side of the
+  relation is not actually single-valued).
+
+### Mongo dialect
+
+- **FK fields accept UUID strings in addition to native `ObjectId`.**
+  `buildMongooseSchema` now declares FK refs as `Schema.Types.Mixed` rather
+  than `Schema.Types.ObjectId`. Replicated documents originating from a
+  SQL dialect (SQLite / Postgres / … using UUID primary keys) are no longer
+  rejected by Mongoose path validation. A native Mongo app writing proper
+  `ObjectId` refs keeps working unchanged.
+- **`findAll()` / `findOne()` fall back to `{ id: fkValue }` when `populate()`
+  returns `null`.** When a UUID-string FK cannot be resolved through the
+  default Mongoose `_id` lookup (which expects matching type), the dialect
+  keeps a raw `lean()` query alongside the populated one and patches the
+  missing refs post-hoc by a direct `findOne({ id: fk })` on the target
+  collection. Transparent to the caller, prevented silent data loss during
+  cross-dialect reads.
+
+Together, these four items unblock bidirectional SQL ↔ Mongo sync through
+[@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator).
+
 ## Multiple simultaneous connections
 
 ```typescript
