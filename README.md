@@ -3,9 +3,82 @@
 > **Plug & Play ORM to Drive 13 Databases at Once**
 
 [![npm version](https://img.shields.io/npm/v/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
+[![npm downloads](https://img.shields.io/npm/dm/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
+[![dialects](https://img.shields.io/badge/dialects-13-success.svg)](#databases)
+[![Types: TypeScript](https://img.shields.io/badge/types-TypeScript-blue.svg)](https://www.typescriptlang.org/)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/@mostajs/orm)](https://bundlephobia.com/package/@mostajs/orm)
 
-Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — one API, **13 databases**, zero lock-in, bundler-friendly.
+Hibernate-inspired multi-dialect ORM for Node.js & TypeScript — **one API, 13 databases, zero lock-in, bundler-friendly**.
+
+📦 **npm** · https://www.npmjs.com/package/@mostajs/orm
+🐙 **GitHub** · https://github.com/apolocine/mosta-orm
+📚 **Docs** · *(coming soon)*
+🚀 **Product Hunt** · *(launch link to be added)*
+
+---
+
+## Why @mostajs/orm ?
+
+- 🎯 **One API, 13 dialects.** Switch from PostgreSQL to MongoDB to SQLite without rewriting a single repository call.
+- 🪶 **Zero lock-in.** Native drivers, no proprietary query DSL — your SQL/NoSQL stays portable.
+- 🧬 **Hibernate / JPA semantics.** `@OneToMany`, cascade types, `SAVEPOINT`, schema strategies (`validate`/`update`/`create`/`create-drop`) — concepts battle-tested for 25 years, ported to TypeScript.
+- 🌉 **Drop-in Prisma replacement.** [`@mostajs/orm-bridge`](https://www.npmjs.com/package/@mostajs/orm-bridge) lets you keep your Prisma code while running on any of 13 databases.
+- 🔁 **Cross-dialect replication built-in.** [`@mostajs/replicator`](https://www.npmjs.com/package/@mostajs/replicator) — CDC + master/slave + failover across SQL ↔ MongoDB.
+- 🧪 **Bundler-friendly.** Tree-shakable ESM, no `eval`, works with esbuild / Vite / Next.js / Bun out of the box.
+
+## 60-second demo
+
+```bash
+npm install @mostajs/orm better-sqlite3
+```
+
+```typescript
+import { getDialect } from '@mostajs/orm'
+import { UserSchema } from './schemas/user.schema'
+
+const db = await getDialect({ dialect: 'sqlite', uri: ':memory:' }, [UserSchema])
+const userRepo = db.repo<typeof UserSchema>('User')
+
+await userRepo.create({ email: 'alice@example.com', name: 'Alice' })
+const alice = await userRepo.findOne({ email: 'alice@example.com' })
+```
+
+Want PostgreSQL instead ? Change one line :
+
+```typescript
+const db = await getDialect({ dialect: 'postgres', uri: process.env.DATABASE_URL }, [UserSchema])
+```
+
+That's it. Same `repo.create()`, same `repo.findOne()`, same TypeScript types — different dialect.
+
+## How it compares
+
+| | @mostajs/orm | Prisma | Drizzle | TypeORM |
+|---|:---:|:---:|:---:|:---:|
+| SQL dialects | **9** *(PG, MySQL, MariaDB, SQLite, MSSQL, Oracle, DB2, HANA, Cockroach…)* | 5 | 5 | 8 |
+| NoSQL dialects | **MongoDB native** | ❌ | ❌ | ❌ |
+| Same API across SQL & NoSQL | ✅ | ❌ | ❌ | ❌ |
+| Cross-dialect replication | ✅ *(via [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator))* | ❌ | ❌ | ❌ |
+| Schema-as-code *(no DSL)* | ✅ TypeScript objects | DSL `.prisma` | TS objects | Decorators |
+| Code generation step | ❌ *(zero codegen)* | ✅ required | ❌ | ❌ |
+| Drop-in Prisma replacement | ✅ *(via [@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge))* | — | ❌ | ❌ |
+| Migration from Prisma | ✅ *(automated CLI)* | — | manual | manual |
+| Hibernate / JPA semantics | ✅ | ❌ | ❌ | partial |
+| License | AGPL-3.0 *(+ commercial)* | Apache-2.0 | Apache-2.0 | MIT |
+
+> Numbers as of v1.13.1 — see [`@mostajs/orm-cli`](https://www.npmjs.com/package/@mostajs/orm-cli) for the automated Prisma → @mostajs migration tool.
+
+## Star · Sponsor · Contribute
+
+If `@mostajs/orm` saves you days of glue code, please :
+
+- ⭐ **Star** the repo — visibility helps me keep maintaining it.
+- 💖 **Sponsor** development → [github.com/sponsors/apolocine](https://github.com/sponsors/apolocine)
+- 🐛 Report issues / submit PRs — every contribution counts.
+- ✉️ Commercial license & support : drmdh@msn.com
+
+---
 
 ## Databases
 
