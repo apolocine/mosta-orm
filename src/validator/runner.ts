@@ -15,15 +15,44 @@ import { R001_EMPTY_RELATIONS } from './rules/r001-empty-relations.js'
 import { R002_FK_NAMING } from './rules/r002-fk-naming.js'
 import { R003_SOFT_DELETE } from './rules/r003-soft-delete.js'
 import { R004_DUPLICATE_ENTITY } from './rules/r004-duplicate-entity.js'
+import { R004B_LEGACY_ENTITY } from './rules/r004b-legacy-entity.js'
 import { R005_ANY_TYPED_REPO } from './rules/r005-any-typed-repo.js'
+import { R006_JSON_AS_RELATION } from './rules/r006-json-as-relation.js'
+import { R009_MISSING_LOOKUP_INDEX } from './rules/r009-missing-lookup-index.js'
+import { R010_MISSING_AUDIT_TABLE } from './rules/r010-missing-audit-table.js'
+import { R013_MISSING_CASCADE } from './rules/r013-missing-cascade.js'
+import { R014_REPO_FACTORY_BOILERPLATE } from './rules/r014-repo-factory-boilerplate.js'
+import { R015_FLAT_LIB_STRUCTURE } from './rules/r015-flat-lib-structure.js'
+import { R016_AUDIT_EMAIL_AS_STRING } from './rules/r016-audit-email-as-string.js'
+import { R017_UNBOUNDED_BLOB } from './rules/r017-unbounded-blob.js'
+import {
+  R007_REDUNDANT_DERIVED_FIELD,
+  R008_BEST_EFFORT_RESOLVER,
+  R011_LEGACY_DEAD_CODE,
+  R012_DUPLICATE_IMPLEMENTATION,
+  R018_EXTERNAL_SCHEMA_OVERSCOPED,
+} from './rules/r007-r008-r011-r012-r018-stubs.js'
 
 const DEFAULT_RULES: Rule[] = [
   R001_EMPTY_RELATIONS,
   R002_FK_NAMING,
   R003_SOFT_DELETE,
   R004_DUPLICATE_ENTITY,
+  R004B_LEGACY_ENTITY,
   R005_ANY_TYPED_REPO,
-  // R006..R018 en Phase V2 / V3
+  R006_JSON_AS_RELATION,
+  R007_REDUNDANT_DERIVED_FIELD,
+  R008_BEST_EFFORT_RESOLVER,
+  R009_MISSING_LOOKUP_INDEX,
+  R010_MISSING_AUDIT_TABLE,
+  R011_LEGACY_DEAD_CODE,
+  R012_DUPLICATE_IMPLEMENTATION,
+  R013_MISSING_CASCADE,
+  R014_REPO_FACTORY_BOILERPLATE,
+  R015_FLAT_LIB_STRUCTURE,
+  R016_AUDIT_EMAIL_AS_STRING,
+  R017_UNBOUNDED_BLOB,
+  R018_EXTERNAL_SCHEMA_OVERSCOPED,
 ]
 
 /** Point d'entrée principal. */

@@ -27,4 +27,20 @@ export { R001_EMPTY_RELATIONS } from './rules/r001-empty-relations.js'
 export { R002_FK_NAMING } from './rules/r002-fk-naming.js'
 export { R003_SOFT_DELETE } from './rules/r003-soft-delete.js'
 export { R004_DUPLICATE_ENTITY } from './rules/r004-duplicate-entity.js'
+export { R004B_LEGACY_ENTITY } from './rules/r004b-legacy-entity.js'
 export { R005_ANY_TYPED_REPO } from './rules/r005-any-typed-repo.js'
+export { R006_JSON_AS_RELATION } from './rules/r006-json-as-relation.js'
+export { R009_MISSING_LOOKUP_INDEX } from './rules/r009-missing-lookup-index.js'
+export { R010_MISSING_AUDIT_TABLE } from './rules/r010-missing-audit-table.js'
+export { R013_MISSING_CASCADE } from './rules/r013-missing-cascade.js'
+export { R014_REPO_FACTORY_BOILERPLATE } from './rules/r014-repo-factory-boilerplate.js'
+export { R015_FLAT_LIB_STRUCTURE } from './rules/r015-flat-lib-structure.js'
+export { R016_AUDIT_EMAIL_AS_STRING } from './rules/r016-audit-email-as-string.js'
+export { R017_UNBOUNDED_BLOB } from './rules/r017-unbounded-blob.js'
+export {
+  R007_REDUNDANT_DERIVED_FIELD,
+  R008_BEST_EFFORT_RESOLVER,
+  R011_LEGACY_DEAD_CODE,
+  R012_DUPLICATE_IMPLEMENTATION,
+  R018_EXTERNAL_SCHEMA_OVERSCOPED,
+} from './rules/r007-r008-r011-r012-r018-stubs.js'
