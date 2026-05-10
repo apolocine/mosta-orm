@@ -1,6 +1,6 @@
 {
   "name": "@mostajs/orm",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
   "license": "AGPL-3.0-or-later",
@@ -23,7 +23,15 @@
       "types": "./dist/bridge/index.d.ts",
       "import": "./dist/bridge/index.js",
       "default": "./dist/bridge/index.js"
+    },
+    "./validator": {
+      "types": "./dist/validator/index.d.ts",
+      "import": "./dist/validator/index.js",
+      "default": "./dist/validator/index.js"
     }
+  },
+  "bin": {
+    "mostajs-orm-validator": "dist/validator/cli.js"
   },
   "files": [
     "dist",
@@ -69,7 +77,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@mostajs/config": "^1.0.0"
+    "@mostajs/config": "^1.0.0",
+    "jiti": "^2.7.0"
   },
   "peerDependencies": {
     "@google-cloud/spanner": ">=7.0.0",
