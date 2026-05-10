@@ -2,6 +2,87 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.14.0] — 2026-05-11
+
+### Added — `ORMConceptValidator` *(new submodule `@mostajs/orm/validator`)*
+
+Algorithmic linter for `EntitySchema` sets. Detects 18 conceptual
+anomalies (empty relations, FK naming inconsistency, soft-delete
+patterns, JSON-as-relation, dead code, missing audit, unbounded
+blobs, etc.). Zero IA, zero heuristics, **fully generic** — same
+binary detects the same anti-patterns in any consumer codebase.
+
+```ts
+import { validateSchemas, formatText } from '@mostajs/orm/validator'
+
+const report = await validateSchemas(Object.values(schemas), {
+  sourceRoot: './lib',
+})
+console.log(formatText(report))
+```
+
+```bash
+npx mostajs-orm-validator ./schemas --src ./lib --ci --max-warnings 0
+```
+
+**15 active rules + 1 stub** : R001..R018 (cf. README section
+"ORMConceptValidator").
+
+**Output formats** : text *(TTY-aware ANSI colors)*, JSON *(CI/diff)*,
+Markdown *(human-readable)*.
+
+**Configurable** : ignore list, severity override, `softDeletePatterns`,
+`auditByFields`, thresholds — no hardcoded business strings.
+
+**TypeScript schemas** loaded directly via [`jiti`](https://github.com/unjs/jiti)
+*(new dep)* — no compile step required.
+
+**Validation** :
+- 18/18 unit tests pass
+- 8/8 smoke E2E checks pass on a real consumer codebase (15+ schemas)
+
+**Non-breaking** : opt-in submodule.
+
+### Added — `bin` entry `mostajs-orm-validator`
+
+Available via `npx mostajs-orm-validator`.
+
+---
+
+## [1.13.1] — 2026-04-24
+
+Two defensive fixes surfaced while wiring the brand-new Java client
+(`com.mostajs:mostajs-net-client`) to the live demo server at
+`https://mcp.amia.fr/`. Minimal payloads (`{name, collection, fields}`
+without `indexes` nor `relations`) were crashing the server with
+`Cannot read properties of undefined (reading 'length')`.
+
+### Fixed — `AbstractSqlDialect.generateIndexes()` guards against missing `indexes`
+
+`EntitySchema.indexes` is declared optional in the type, but
+`generateIndexes()` iterated `schema.indexes.length` directly. When a
+caller registered a schema without an `indexes` array (legitimate
+minimal case), the loop threw a `TypeError`. Fixed by defaulting to
+`schema.indexes ?? []` before iterating.
+
+Reported by the Java integration test
+`LiveServerIntegrationTest.uploadUserSchemaIfMissing`.
+
+### Fixed — `validateSchemas()` guards against missing `relations`
+
+Symmetric issue in `core/registry.ts:validateSchemas()` :
+`Object.entries(schema.relations)` throws `TypeError: Cannot convert
+undefined or null to object` when `relations` is absent. Fixed by
+defaulting to `{}` before enumerating.
+
+### Operational impact
+
+The Java / C# / mobile clients can now post a minimal `EntitySchema`
+via `POST /api/upload-schemas-json` (handled by `@mostajs/net`) without
+being forced to emit empty `indexes: []` / `relations: {}` fields just
+to survive DDL generation. Same root cause as the bug report that
+came from `mosta-net-client-java` v0.1.
+
 ## [1.13.0] — 2026-04-21
 
 Three independent improvement groups shipped together : **SQL FK correctness**,
