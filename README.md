@@ -334,6 +334,146 @@ DB_DIALECT=mongodb    SGBD_URI=mongodb://...
 | `@mostajs/orm` | The core ORM API : `getDialect`, `registerSchemas`, `BaseRepository`, `EntityService`, schema types, `diffSchemas`, errors. |
 | `@mostajs/orm/bridge` | **JDBC bridge** (v1.9.4+) : `JdbcNormalizer`, `BridgeManager`, `JDBC_REGISTRY`, jar upload. Pulled out of the root to keep `child_process` / `fs` spawn out of client bundles. |
 | `@mostajs/orm/register` | Zero-code registration side-effect for dynamic schema loading. |
+| **`@mostajs/orm/validator`** | **v1.14+ — ORMConceptValidator** : algorithmic linter for `EntitySchema` sets. Detects 18 conceptual anomalies (empty relations, FK naming inconsistency, soft-delete patterns, dead code, missing audit, unbounded blobs…). See below. |
+
+---
+
+## 🔍 ORMConceptValidator (v1.14+)
+
+**Algorithmic linter** for your ORM schemas — detects 18 conceptual
+anomalies before they bite in production. Zero IA, zero heuristics
+flou, **fully generic** *(no hardcoded entity name — `KNOWN_ENTITY_REFS`
+is derived at runtime from the schemas you pass)*.
+
+### Quick start
+
+```bash
+# CLI — point it at your schemas directory
+npx mostajs-orm-validator ./schemas
+
+# With cross-file rules (R005, R007, R008, R011, R012, R014, R015) :
+npx mostajs-orm-validator ./schemas --src ./lib
+
+# In a CI pipeline :
+npx mostajs-orm-validator ./schemas --src ./lib --ci --max-warnings 0
+```
+
+Or programmatically :
+
+```typescript
+import { validateSchemas, formatText } from '@mostajs/orm/validator'
+import * as schemas from './schemas'
+
+const report = await validateSchemas(Object.values(schemas), {
+  sourceRoot: './lib',
+})
+
+console.log(formatText(report))
+console.log(`${report.findings.length} findings`)
+```
+
+### What it detects (18 rules)
+
+| ID | Severity | Detection |
+|---|---|---|
+| **R001-EMPTY-RELATIONS** | warning | String field named like another entity (e.g. `project`, `respondent`) but `relations: {}` empty → loses ORM cascade & FK validation |
+| **R002-FK-NAMING-INCONSISTENT** | warning | Mix of conventions in same set (`parentId` vs `project`, `questionId` vs `section`) — flags the minority |
+| **R003-SOFT-DELETE-INCONSISTENT** | warning/info | Multiple soft-delete patterns concurrent (`deleted`/`cancelled`/`archived`) OR manual `deleted/deletedAt` while `softDelete: true` is available natively |
+| **R004-DUPLICATE-ENTITY-SHAPE** | info | Pair of schemas with Jaccard on field names ≥ threshold (default 0.7) — possible legacy |
+| **R004B-LEGACY-ENTITY** | info/warning | Name overlap (substring ≥ 4 chars or Jaro-Winkler ≥ 0.75) — flags the smaller schema. Bumps to warning if `legacy/deprecated` comment found in sources |
+| **R005-ANY-TYPED-REPO** | warning | `BaseRepository<any>` in source files — typing lost. **Needs `--src`** |
+| **R006-JSON-AS-RELATION** | info | `*sJson` field containing list of FK slugs/ids — should be normalized into junction table |
+| **R007-REDUNDANT-DERIVED-FIELD** | info | Persisted field duplicate of a pure function of its id (e.g. `blobPath` derivable from `archiveBlobPath(id)`). **Needs `--src`** |
+| **R008-BEST-EFFORT-FK-RESOLVER** | warning | `best-effort`/`TODO V2`/`HACK` comment + `?? null` fallback → root cause hidden. **Needs `--src`** |
+| **R009-MISSING-LOOKUP-INDEX** | info/hint | `unique` field without dedicated index, OR FK string without index for inverse lookups |
+| **R010-MISSING-AUDIT-TABLE** | hint | No schema resembling `AuditLog` (actor + action + timestamp) — sensitive actions untraceable |
+| **R011-LEGACY-DEAD-CODE** | info | TS source file never imported (entry points like `page.tsx`/`route.ts` excluded). **Needs `--src`** |
+| **R012-DUPLICATE-IMPLEMENTATION** | info | Pair of source files exporting overlapping function signatures (Jaccard ≥ 0.85). **Needs `--src`** |
+| **R013-MISSING-CASCADE** | warning | `many-to-one` relation without explicit `onDelete` → orphans on parent delete |
+| **R014-REPO-FACTORY-BOILERPLATE** | info | ≥ 5 `get*Repo()` helpers in same file — suggest factory. **Needs `--src`** |
+| **R015-FLAT-LIB-STRUCTURE** | hint | Directory with > 25 flat files — suggest sub-directory organisation. **Needs `--src`** |
+| **R016-AUDIT-EMAIL-AS-STRING** | info | `createdBy`/`validatedBy`/etc. typed string instead of FK User → loses ref. integrity if email changes |
+| **R017-UNBOUNDED-BLOB-FIELD** | hint | `*Json`/`*Payload`/`*Blob`/`*Manifest` without documented size limit |
+| **R018-EXTERNAL-SCHEMA-OVERSCOPED** | info | *(stub V2 — full impl in V3 with ts-morph)* External schema with many unused fields |
+
+### Output formats
+
+```bash
+# Console output (TTY-aware ANSI colors)
+npx mostajs-orm-validator ./schemas
+
+# JSON (for CI / diff)
+npx mostajs-orm-validator ./schemas --format json --out report.json
+
+# Markdown (human-readable report)
+npx mostajs-orm-validator ./schemas --format markdown --out REPORT.md
+```
+
+Example output :
+
+```
+✗ Section.project           R001-EMPTY-RELATIONS                  warning
+    Field 'Section.project' looks like an FK to 'Project' but no ORM
+    relation declared.
+    Suggestion:
+      relations: {
+        project: { type: 'many-to-one', target: 'Project',
+                   required: true, onDelete: 'cascade' },
+      },
+```
+
+### Configuration
+
+All thresholds and patterns are configurable — no hardcoded business
+strings. Pass a config to `validateSchemas` :
+
+```typescript
+const report = await validateSchemas(schemas, {
+  sourceRoot: './lib',
+  ignore: ['R015', 'R017'],   // skip these rules entirely
+  rules: { R001: 'error' },   // override severity (e.g. block CI on R001)
+  softDeletePatterns: [
+    { flag: 'deleted',   timestamp: 'deletedAt' },
+    { flag: 'cancelled', timestamp: 'cancelledAt' },
+    { flag: 'archived',  timestamp: 'archivedAt' },
+    // add your project-specific patterns here
+  ],
+  auditByFields: ['createdBy', 'validatedBy', 'reviewedBy'],
+  thresholds: {
+    duplicateEntityJaccard: 0.7,        // R004
+    duplicateImplJaroWinkler: 0.85,     // R012
+    flatLibMaxFiles: 25,                // R015
+  },
+})
+```
+
+### CI integration
+
+```jsonc
+// package.json
+{
+  "scripts": {
+    "lint:schemas": "mostajs-orm-validator ./schemas --src ./lib --ci --max-warnings 0"
+  }
+}
+```
+
+The `--ci` flag exits with code 1 if the number of `error + warning`
+findings exceeds `--max-warnings` (default 0). Bind it to your
+pre-commit hook or GitHub Actions to block regressions.
+
+### Generic by design
+
+The validator is **fully generic** — no hardcoded entity name, no
+project-specific assumption. The set of "known entities"
+(`KNOWN_ENTITY_REFS`) is derived at runtime from the schemas you pass.
+Same binary detects the same anti-patterns in any consumer codebase.
+
+### TypeScript schemas
+
+The CLI loads `.ts`/`.tsx`/`.js`/`.mjs` files directly via [`jiti`](https://github.com/unjs/jiti)
+— no pre-compile step required. TypeScript `paths` aliases are resolved
+automatically.
 
 ## EntityService (for @mostajs/net)
 
