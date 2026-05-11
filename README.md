@@ -195,6 +195,49 @@ await repo.upsert({ email: 'a@b.com' }, { name: 'Upserted' })
 await repo.count({ status: 'active' })
 ```
 
+### Query options
+
+```typescript
+await repo.findAll(
+  { status: 'active', role: { $in: ['admin', 'editor'] } },   // filter
+  {
+    sort: { createdAt: -1, name: 1 },                          // multi-field sort
+    skip: 20, limit: 10,                                       // pagination
+    select: ['id', 'email', 'name'],                           // projection
+  },
+)
+```
+
+`$in`, `$nin`, `$gt`, `$gte`, `$lt`, `$lte`, `$ne`, `$regex`, `$exists` are all
+supported uniformly across SQL & NoSQL dialects.
+
+## Soft delete *(native)*
+
+Set `softDelete: true` on a schema and `@mostajs/orm` handles everything :
+
+```typescript
+export const PostSchema: EntitySchema = {
+  name: 'Post',
+  collection: 'posts',
+  timestamps: true,
+  softDelete: true,                          // ← that's it
+  fields: { title: { type: 'string' }, body: { type: 'string' } },
+}
+```
+
+```typescript
+await postRepo.delete(id)                    // sets deletedAt + isDeleted=true
+await postRepo.findAll({})                   // excludes soft-deleted rows
+await postRepo.findAll({}, { includeDeleted: true })  // include them
+await postRepo.restore(id)                   // un-delete (clears deletedAt)
+await postRepo.purge(id)                     // hard-delete, row removed for good
+```
+
+Works identically across SQL (column `deletedAt timestamp NULL`) and MongoDB
+(field `deletedAt` indexed). No more home-rolled `deleted` flag mismatches —
+the **R003-SOFT-DELETE-INCONSISTENT** validator rule will flag manual patterns
+*(and auto-migrate them via `--fix R003`)*.
+
 ## Transactions
 
 Group multiple operations into a single atomic unit. SQL dialects (PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle, DB2, CockroachDB, HANA, Sybase, HSQLDB, Spanner) wrap the callback in `BEGIN` / `COMMIT` / `ROLLBACK`. If any operation throws, every write inside the block is rolled back.
@@ -345,6 +388,11 @@ anomalies before they bite in production. Zero IA, zero heuristics
 flou, **fully generic** *(no hardcoded entity name — `KNOWN_ENTITY_REFS`
 is derived at runtime from the schemas you pass)*.
 
+**Real-world impact (v1.17.0)** : applied to iquesta (21 schemas, 70 findings) —
+`--fix R001,R001B,R002,R003` auto-corrected all 16 structural anomalies in
+seconds. Cross-projects calibration over 17 mostajs/* + apolocine codebases :
+**247 findings** identified, **−23** after applying C1+C2 to iquesta alone.
+
 ### Quick start
 
 ```bash
@@ -462,6 +510,105 @@ The `--ci` flag exits with code 1 if the number of `error + warning`
 findings exceeds `--max-warnings` (default 0). Bind it to your
 pre-commit hook or GitHub Actions to block regressions.
 
+### Auto-fix (v1.15+ — V3-A) — `--fix` workflow
+
+The validator can **apply the fix it suggests**, in-place via [ts-morph](https://ts-morph.com/),
+for a subset of rules :
+
+| Rule | Auto-fix action |
+|---|---|
+| **R001-EMPTY-RELATIONS** | Move the FK string field out of `fields: {}` and add a matching `many-to-one` entry to `relations: {}` with `onDelete: 'cascade'`. |
+| **R001B-FIELD-RELATION-DUPLICATE** | Remove the redundant field when both `field` *(string)* and `relations.field` *(many-to-one)* exist for the same FK — leftover of a partial earlier fix. *(v1.17+)* |
+| **R002-FK-NAMING-INCONSISTENT** | Rename the field in the schema to match the majority convention *(`parentId → parent`)*. **Cross-file consumer rename is left to the dev** *(use your IDE rename refactor)*. |
+| **R003-SOFT-DELETE-INCONSISTENT** | Add `softDelete: true` and remove manual `deleted` + `deletedAt` fields. *(v1.17+)* |
+| **R016-AUDIT-EMAIL-AS-STRING** | Convert the string field *(`createdBy`, `updatedBy`…)* into a `many-to-one` relation to `User` with `onDelete: 'set-null'`. |
+
+```bash
+# Dry-run — show diffs without writing
+npx mostajs-orm-validator ./schemas --fix-dry-run
+
+# Apply — writes <file>.bak backups by default
+npx mostajs-orm-validator ./schemas --fix
+
+# Apply only a subset of rules
+npx mostajs-orm-validator ./schemas --fix --fix-rules R001,R003
+
+# Without .bak files (CI / git-tracked workflow)
+npx mostajs-orm-validator ./schemas --fix --no-backup
+
+# Roll back the last --fix run (restores every <file>.bak)
+npx mostajs-orm-validator ./schemas --rollback-fix
+```
+
+Workflow recommended :
+
+1. Commit your current state *(so you have a clean diff baseline)*.
+2. `--fix-dry-run` first — review the proposed diffs.
+3. `--fix` once you're confident.
+4. Run your test suite. If something broke, `--rollback-fix` restores the
+   `.bak` files. Iterate with `--fix-rules` to apply only what works.
+5. `git diff` + commit.
+
+### In-process API
+
+```typescript
+import {
+  validateSchemas,
+  applyFixes,
+  rollbackFixes,
+  formatText, formatJson, formatMarkdown,
+} from '@mostajs/orm/validator'
+
+const report = await validateSchemas(schemas, { sourceRoot: './lib' })
+console.log(formatJson(report, true))   // pretty JSON for CI artifact
+
+const fixResults = await applyFixes(report, {
+  sourceRoot: './schemas',
+  dryRun: false,
+  rules: ['R001', 'R001B', 'R003'],     // narrow the scope
+  backup: true,
+})
+
+console.log(`Applied ${fixResults.filter(r => r.applied).length} fixes`)
+
+// Tests fail ? roll back :
+rollbackFixes('./schemas')              // restores all .bak files and deletes them
+```
+
+### Resilience features *(v1.17+)*
+
+- **Cascade ts-morph mitigation** : when two fixes target the same file
+  *(e.g. `registration.schema.ts` with both `RegistrationSchema` and
+  `AttendanceSchema`)*, the fixer reloads the `SourceFile` between fixes
+  via `removeSourceFile + createSourceFile` to avoid "node forgotten" crashes.
+- **Text fallback** : if ts-morph `.remove()` crashes on an end-of-line
+  comment, the fixer falls back to a robust regex that removes the field
+  cleanly *(e.g. `project: { type: 'string' }, // FK Project`)*.
+- **Try / catch around each fix** : a crash on one finding never aborts the
+  rest of the batch. Failures are reported in `skipped` with a `reason`.
+
+### VSCode extension *(v0.2.0)*
+
+A VSCode extension wraps the validator so you get **inline squiggles** on
+your `*.schema.ts` files plus **Code Actions** *(quick-fix UI)* for the
+auto-fixable rules :
+
+```
+# Install from VSIX (until Marketplace publish)
+code --install-extension mostajs-orm-vscode-0.2.0.vsix
+```
+
+Features :
+
+- In-process import of `@mostajs/orm/validator` *(no CLI spawn → faster)*.
+- Debounced 300ms re-lint on save / edit.
+- Hover : full finding details + suggestion preview.
+- Code Action *("💡 lightbulb")* : applies the corresponding `--fix` rule
+  in-place. The `.bak` discipline applies — undo via `--rollback-fix` or
+  VSCode "Undo Local Changes".
+
+Source : [`mostajs/mosta-orm-vscode`](https://github.com/apolocine/mosta-orm-vscode).
+
 ### Generic by design
 
 The validator is **fully generic** — no hardcoded entity name, no
@@ -474,6 +621,96 @@ Same binary detects the same anti-patterns in any consumer codebase.
 The CLI loads `.ts`/`.tsx`/`.js`/`.mjs` files directly via [`jiti`](https://github.com/unjs/jiti)
 — no pre-compile step required. TypeScript `paths` aliases are resolved
 automatically.
+
+## Recipes *(cookbook)*
+
+### Pagination + total count
+
+```typescript
+const [rows, total] = await Promise.all([
+  postRepo.findAll({ author: userId }, { sort: { createdAt: -1 }, skip: 20, limit: 10 }),
+  postRepo.count({ author: userId }),
+])
+```
+
+### Composite unique upsert *(idempotent seed)*
+
+```typescript
+// Reuses the {tenantId, slug} composite unique to avoid race conditions
+await memberRepo.upsert(
+  { tenantId: 't1', slug: 'admin' },
+  { tenantId: 't1', slug: 'admin', email: 'admin@t1.io', role: 'owner' },
+)
+```
+
+### Many-to-many through junction *(read + insert)*
+
+```typescript
+// Schema : User.roles = many-to-many → Role through 'user_roles'
+const user = await userRepo.findByIdWithRelations(userId, ['roles'])
+console.log(user.roles)                                     // [{ name: 'admin' }, …]
+
+// Add a role link (writes into the junction table) :
+await dialect.linkRelation('User', userId, 'roles', roleId)
+await dialect.unlinkRelation('User', userId, 'roles', roleId)
+```
+
+### Cross-dialect bootstrap *(one codebase, two environments)*
+
+```typescript
+// boot.ts — runs identically against SQLite (dev) and PostgreSQL (prod)
+import { registerSchemas, getDialect } from '@mostajs/orm'
+import { schemas } from './schemas'
+
+export async function boot() {
+  registerSchemas(schemas)
+  const dialect = await getDialect()                        // picks env at runtime
+  await dialect.initSchema(schemas)                         // DDL per strategy
+  return dialect
+}
+
+// dev : DB_DIALECT=sqlite SGBD_URI=./data.sqlite npm run boot
+// prod: DB_DIALECT=postgres SGBD_URI=$DATABASE_URL npm run boot
+```
+
+### Transaction with isolation upgrade
+
+```typescript
+await dialect.$transaction(
+  async (tx) => {
+    const acct = await tx.findOne('accounts', { id: 'a' })
+    if (acct.balance < 100) throw new Error('insufficient')
+    await tx.update('accounts', { id: 'a' }, { $inc: { balance: -100 } })
+    await tx.create('ledger',   { type: 'debit', amount: 100, accountId: 'a' })
+  },
+  { isolation: 'SERIALIZABLE' },                            // upgrade isolation
+)
+```
+
+### Lint your schemas in a pre-commit hook
+
+```bash
+# .husky/pre-commit
+#!/bin/sh
+npx mostajs-orm-validator ./schemas --src ./lib --ci --max-warnings 0
+```
+
+### Soft-delete migration *(legacy to native)*
+
+```bash
+# Detects manual deleted/deletedAt pattern, suggests softDelete: true natif
+npx mostajs-orm-validator ./schemas --fix-dry-run --fix-rules R003
+
+# Apply when satisfied :
+npx mostajs-orm-validator ./schemas --fix --fix-rules R003
+```
+
+The validator will :
+
+1. Add `softDelete: true` to the schema object.
+2. Remove the manual `deleted` and `deletedAt` fields from `fields: {}`.
+3. Leave a `.bak` backup so you can `--rollback-fix` if your runtime code
+   relied on the manual fields directly.
 
 ## EntityService (for @mostajs/net)
 
