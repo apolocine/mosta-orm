@@ -2,6 +2,57 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.17.0] — 2026-05-11
+
+### Added — Auto-fix V3-A V3 *(R001B + R003 + cascade mitigation)*
+
+3 améliorations livrées suite à l'application réelle du validator sur iquesta *(247 → 224 findings cross-projects, iquesta R001/R001B/R002/R003 = 0)* :
+
+- **R001B-FIELD-RELATION-DUPLICATE** : nouvelle sous-règle qui détecte les
+  doublons « field FK string + relation déclarée pour le même nom » *(résidu
+  d'un fix R001 partiellement appliqué)*. Auto-fixable : retire le field
+  redondant en gardant la relation propre.
+
+- **R003-SOFT-DELETE-INCONSISTENT** : auto-fix du cas « migrate to native »
+  *(severity `info`, `fixable: true`)*. Ajoute `softDelete: true` au schéma et
+  retire les fields manuels `deleted` + `deletedAt`. La détection des
+  patterns business *('cancelled', 'disabled')* est désactivée par défaut —
+  ces patterns décrivent un statut métier, pas un soft-delete. Activable via
+  `options.softDeletePatterns` pour cas spécifiques.
+
+- **Cascade ts-morph mitigation** : entre deux fixes consécutifs sur le même
+  fichier *(ex: `registration.schema.ts` contenant `RegistrationSchema` +
+  `AttendanceSchema`)*, le fixer recharge `SourceFile` via
+  `removeSourceFile + createSourceFile` pour repartir avec un AST frais et
+  éviter les "node forgotten".
+
+- **Fallback textuel** dans `fixR001B` : si ts-morph `.remove()` crash sur
+  un commentaire en fin de ligne, bascule sur regex robuste pour retirer
+  proprement `<field>: { ... }, // <comment>`.
+
+### Changed — `DEFAULT_SOFT_DELETE_PATTERNS` canoniques uniquement
+
+Les patterns par défaut sont restreints à `deleted`/`archived`/`removed`
+*(les seuls vrais soft-deletes)*. `cancelled` et `disabled` retirés —
+ce sont des statuts métier, pas une politique de rétention.
+
+### Fixed — Bug défensif sur schemas optionnels
+
+- `core/registry.ts` `validateSchemas()` : guard sur `schema.relations`
+  undefined *(évitait `Cannot convert undefined or null to object` au boot
+  quand un schéma minimal n'a aucune relation)*.
+- `dialects/abstract-sql.dialect.ts` `generateIndexes()` : guard sur
+  `schema.indexes` undefined *(évitait crash sur payloads JSON minimaux
+  reçus via `POST /api/upload-schemas-json`)*.
+
+### Migration
+
+Aucune. Les améliorations sont rétro-compatibles. Pour reprofiter de
+`R001B` sur un projet existant *(détection des leftovers de fix R001
+antérieurs)*, relancer simplement le validator.
+
+---
+
 ## [1.16.0] — 2026-05-11
 
 ### Added — Auto-fix V3-A V2 *(R001 + R002 + R016)*

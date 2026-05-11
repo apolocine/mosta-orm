@@ -32,7 +32,19 @@ export const R001_EMPTY_RELATIONS: Rule = {
           schema.relations &&
           (fieldName in schema.relations || stripped in schema.relations)
 
-        if (hasRelation) continue
+        if (hasRelation) {
+          // Sous-cas 1b : field FK reste dans `fields` alors qu'une relation
+          // existe → doublon, l'ORM peut traiter incohérent. Fix : retirer le field.
+          findings.push({
+            ruleId: 'R001B-FIELD-RELATION-DUPLICATE',
+            severity: 'warning',
+            message: `Champ '${schema.name}.${fieldName}' est en doublon : déclaré à la fois dans \`fields\` et \`relations\`. Retirer le field — la relation suffit.`,
+            location: { schema: schema.name, field: fieldName },
+            suggestion: `Retirer du bloc \`fields\` :\n  ${fieldName}: { type: 'string', ... }\n\nLa relation \`relations.${fieldName in (schema.relations ?? {}) ? fieldName : stripped}\` suffit.`,
+            fixable: true,
+          })
+          continue
+        }
 
         findings.push({
           ruleId: R001_EMPTY_RELATIONS.id,

@@ -79,7 +79,11 @@ export function validateSchemas(): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   for (const schema of registry.values()) {
-    for (const [field, relation] of Object.entries(schema.relations)) {
+    // `relations` is optional in EntitySchema — skip schemas that don't declare
+    // any (otherwise Object.entries(undefined) throws
+    // "Cannot convert undefined or null to object").
+    const relations = schema.relations ?? {};
+    for (const [field, relation] of Object.entries(relations)) {
       if (!registry.has(relation.target)) {
         errors.push(
           `${schema.name}.${field} references unknown entity "${relation.target}"`

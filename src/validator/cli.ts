@@ -144,7 +144,9 @@ async function main() {
 
   // ─── Auto-fix mode (V3-A) ───────────────────────────────────────
   if (fixMode !== 'off') {
-    const fixRoot = sourceRoot ?? schemasDir
+    // Le fixer doit chercher les schemas dans schemasDir (1er arg CLI), pas
+    // dans --src (qui est destiné aux règles cross-file R005/R007/R008…).
+    const fixRoot = schemasDir
     const isDry = fixMode === 'dry-run'
     console.log(`\n${isDry ? '🔍 DRY-RUN' : '🔧 APPLY'} auto-fix on ${fixRoot}${fixRules ? ` (rules: ${fixRules.join(',')})` : ''}…\n`)
     const fixResults = await applyFixes(report, {

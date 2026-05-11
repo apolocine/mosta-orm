@@ -78,7 +78,7 @@ export const R003_SOFT_DELETE: Rule = {
           message: `'${schemaName}' implémente manuellement (deleted/deletedAt) ce que '@mostajs/orm' offre nativement via 'softDelete: true'.`,
           location: { schema: schemaName, field: 'deletedAt' },
           suggestion: buildMigrateToNativeSuggestion(schemaName),
-          fixable: false,
+          fixable: true,
         })
       }
     }
