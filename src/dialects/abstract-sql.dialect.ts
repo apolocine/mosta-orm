@@ -912,8 +912,13 @@ export abstract class AbstractSqlDialect implements IDialect {
   protected generateIndexes(schema: EntitySchema): string[] {
     const statements: string[] = [];
 
-    for (let i = 0; i < schema.indexes.length; i++) {
-      const idx = schema.indexes[i];
+    // `indexes` is an optional field in EntitySchema — guard against schemas
+    // that simply omit it (e.g. minimal payloads received via
+    // POST /api/upload-schemas-json).
+    const indexes = schema.indexes ?? [];
+
+    for (let i = 0; i < indexes.length; i++) {
+      const idx = indexes[i];
       const fields = Object.entries(idx.fields);
 
       // Skip text indexes

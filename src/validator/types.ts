@@ -94,11 +94,13 @@ export interface Rule {
 
 // ─── Defaults (zéro hardcode métier) ─────────────────────────────
 
+// Patterns soft-delete canoniques (= effacement logique). Volontairement
+// minimal : on n'inclut PAS 'cancelled', 'disabled', 'inactive' qui sont
+// souvent des patterns métier distincts (annulation, désactivation, etc.).
+// Projets peuvent étendre via `softDeletePatterns` option.
 export const DEFAULT_SOFT_DELETE_PATTERNS: SoftDeletePattern[] = [
   { flag: 'deleted',   timestamp: 'deletedAt' },
-  { flag: 'cancelled', timestamp: 'cancelledAt' },
   { flag: 'archived',  timestamp: 'archivedAt' },
-  { flag: 'disabled',  timestamp: 'disabledAt' },
   { flag: 'removed',   timestamp: 'removedAt' },
 ]
 

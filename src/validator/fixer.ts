@@ -103,8 +103,18 @@ export async function applyFixes(report: Report, opts: FixOptions): Promise<FixR
     }
     const originalText = sf.getFullText()
 
+    // Cascade ts-morph mitigation : entre chaque fix, on rafraîchit le
+    // SourceFile via remove+create pour repartir avec un AST frais. Évite
+    // les "node forgotten" quand plusieurs schemas dans le même fichier
+    // ou plusieurs fixes sur le même schema.
+    let currentSf = sf
     for (const f of findings) {
-      const applied = await tryApplyFix(sf, f)
+      let applied: { ok: boolean; reason?: string }
+      try {
+        applied = await tryApplyFix(currentSf, f)
+      } catch (e) {
+        applied = { ok: false, reason: `internal fixer error: ${(e as Error).message.slice(0, 120)}` }
+      }
       results.push({
         ruleId: f.ruleId,
         schema: f.location.schema ?? '?',
@@ -114,9 +124,18 @@ export async function applyFixes(report: Report, opts: FixOptions): Promise<FixR
         reason: applied.reason,
         description: f.message,
       })
+      // Refresh AST pour le prochain fix : récupère le texte modifié et
+      // recrée le SourceFile à partir de ce texte (in-memory, pas de save FS).
+      if (applied.ok) {
+        const text = currentSf.getFullText()
+        project.removeSourceFile(currentSf)
+        currentSf = project.createSourceFile(filePath, text, { overwrite: true })
+      }
     }
 
-    const newText = sf.getFullText()
+    // Récupère le source courant (après cycles remove+create)
+    const finalSf = project.getSourceFile(filePath) ?? currentSf
+    const newText = finalSf.getFullText()
     if (newText !== originalText) {
       // Diff pour le rapport (toujours)
       for (const r of results) {
@@ -141,12 +160,115 @@ async function tryApplyFix(
   sf: SourceFile, finding: Finding,
 ): Promise<{ ok: boolean; reason?: string }> {
   const ruleId = finding.ruleId
+  // R001B (doublon field/relation) → simple remove du field
+  if (ruleId.startsWith('R001B') || ruleId === 'R001B-FIELD-RELATION-DUPLICATE') {
+    return fixR001B_FieldRelationDuplicate(sf, finding)
+  }
   if (ruleId.startsWith('R001')) return fixR001_EmptyRelations(sf, finding)
   if (ruleId.startsWith('R002')) return fixR002_FkNaming(sf, finding)
+  if (ruleId.startsWith('R003')) return fixR003_SoftDeleteNative(sf, finding)
   if (ruleId.startsWith('R013')) return fixR013_MissingCascade(sf, finding)
   if (ruleId.startsWith('R009')) return fixR009_MissingIndex(sf, finding)
   if (ruleId.startsWith('R016')) return fixR016_AuditEmailAsString(sf, finding)
   return { ok: false, reason: `Auto-fix de ${ruleId} non implémenté` }
+}
+
+// ─── R003 — migrer (deleted/deletedAt) manuel vers softDelete natif ──
+
+function fixR003_SoftDeleteNative(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const schemaName = finding.location.schema
+  if (!schemaName) return { ok: false, reason: 'schema manquant' }
+
+  // On ne fixe que le sous-cas "migrer deleted/deletedAt → softDelete natif"
+  // (R003 severity=info). Les patterns divergents (cancelled/etc.) restent
+  // suggestion textuelle — décision métier.
+  if (finding.severity !== 'info') {
+    return { ok: false, reason: 'R003 warning (pattern divergent) nécessite décision métier — non auto-fixable' }
+  }
+
+  const schemaObj = findSchemaObjectLiteral(sf, schemaName)
+  if (!schemaObj) return { ok: false, reason: `schema '${schemaName}' introuvable` }
+
+  // 1. Ajouter `softDelete: true` au schema (idempotent)
+  if (!schemaObj.getProperty('softDelete')) {
+    schemaObj.addPropertyAssignment({ name: 'softDelete', initializer: 'true' })
+  }
+
+  // 2. Retirer `deleted` + `deletedAt` du bloc fields via fallback textuel
+  // (gère les commentaires en fin de ligne).
+  const r1 = removeFieldFromSchemaText(sf, schemaName, 'deleted')
+  if (!r1.ok && !/déjà retiré|introuvable dans fields/.test(r1.reason ?? '')) return r1
+  const r2 = removeFieldFromSchemaText(sf, schemaName, 'deletedAt')
+  if (!r2.ok && !/déjà retiré|introuvable dans fields/.test(r2.reason ?? '')) return r2
+
+  return { ok: true }
+}
+
+// ─── R001B — retire le field redondant qui duplique une relation ──
+
+function fixR001B_FieldRelationDuplicate(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const schemaName = finding.location.schema
+  const fieldName = finding.location.field
+  if (!schemaName || !fieldName) return { ok: false, reason: 'schema/field manquant' }
+
+  // Tentative ts-morph (échoue souvent si commentaire en fin de ligne)
+  try {
+    const schemaObj = findSchemaObjectLiteral(sf, schemaName)
+    if (schemaObj) {
+      const fieldsProp = schemaObj.getProperty('fields') as PropertyAssignment | undefined
+      const fieldsObj = fieldsProp?.getInitializer()
+      if (fieldsObj && fieldsObj.getKindName() === 'ObjectLiteralExpression') {
+        const fields = fieldsObj as ObjectLiteralExpression
+        const fkField = fields.getProperty(fieldName) as PropertyAssignment | undefined
+        if (!fkField) return { ok: false, reason: `champ '${fieldName}' déjà retiré` }
+        fkField.remove()
+        return { ok: true }
+      }
+    }
+  } catch {
+    // Fall through au fallback textuel
+  }
+  return removeFieldFromSchemaText(sf, schemaName, fieldName)
+}
+
+/**
+ * Fallback textuel pour retirer un field d'un schema. Robuste face aux
+ * commentaires en fin de ligne (que ts-morph remove() casse en SyntaxList).
+ */
+function removeFieldFromSchemaText(
+  sf: SourceFile, schemaName: string, fieldName: string,
+): { ok: boolean; reason?: string } {
+  const text = sf.getFullText()
+  const schemaStart = text.indexOf(`${schemaName}Schema`)
+  if (schemaStart < 0) return { ok: false, reason: `schema '${schemaName}' introuvable dans le texte` }
+  const nextExport = text.indexOf('export const', schemaStart + 1)
+  const schemaSlice = text.slice(schemaStart, nextExport > 0 ? nextExport : text.length)
+  const fieldsOpenRel = schemaSlice.indexOf('fields:')
+  if (fieldsOpenRel < 0) return { ok: false, reason: 'fields: introuvable' }
+  const fieldsOpenAbs = schemaStart + fieldsOpenRel
+  const braceOpen = text.indexOf('{', fieldsOpenAbs)
+  let depth = 1
+  let braceClose = braceOpen
+  for (let i = braceOpen + 1; i < text.length && depth > 0; i++) {
+    if (text[i] === '{') depth++
+    else if (text[i] === '}') depth--
+    if (depth === 0) { braceClose = i; break }
+  }
+  const fieldsBlock = text.slice(braceOpen + 1, braceClose)
+  const lineRe = new RegExp(
+    `^\\s*${fieldName.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*:\\s*\\{[^}]*\\}\\s*,?\\s*(?:\\/\\/[^\\n]*)?\\n`,
+    'm',
+  )
+  const m = fieldsBlock.match(lineRe)
+  if (!m) return { ok: false, reason: `ligne '${fieldName}:' introuvable dans fields` }
+  const newFieldsBlock = fieldsBlock.replace(lineRe, '')
+  const newText = text.slice(0, braceOpen + 1) + newFieldsBlock + text.slice(braceClose)
+  sf.replaceWithText(newText)
+  return { ok: true }
 }
 
 // ─── R001 — replace FK string field with relations m2o ──────────
