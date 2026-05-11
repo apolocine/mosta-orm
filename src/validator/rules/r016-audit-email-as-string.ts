@@ -45,7 +45,7 @@ export const R016_AUDIT_EMAIL_AS_STRING: Rule = {
             `Option 2 (audit historique, pas de re-référencement) : laisser en string mais documenter`,
             `que c'est un snapshot immutable de l'email à l'instant T.`,
           ].join('\n'),
-          fixable: false,
+          fixable: true,
         })
       }
     }

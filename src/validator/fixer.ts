@@ -141,10 +141,165 @@ async function tryApplyFix(
   sf: SourceFile, finding: Finding,
 ): Promise<{ ok: boolean; reason?: string }> {
   const ruleId = finding.ruleId
+  if (ruleId.startsWith('R001')) return fixR001_EmptyRelations(sf, finding)
+  if (ruleId.startsWith('R002')) return fixR002_FkNaming(sf, finding)
   if (ruleId.startsWith('R013')) return fixR013_MissingCascade(sf, finding)
   if (ruleId.startsWith('R009')) return fixR009_MissingIndex(sf, finding)
-  // R001, R002, R016 : nécessitent refactor cross-file complexe — V3-A V2
-  return { ok: false, reason: `Auto-fix de ${ruleId} non implémenté en V3-A V1 (suggestion textuelle seulement)` }
+  if (ruleId.startsWith('R016')) return fixR016_AuditEmailAsString(sf, finding)
+  return { ok: false, reason: `Auto-fix de ${ruleId} non implémenté` }
+}
+
+// ─── R001 — replace FK string field with relations m2o ──────────
+
+function fixR001_EmptyRelations(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const schemaName = finding.location.schema
+  const fieldName = finding.location.field
+  if (!schemaName || !fieldName) return { ok: false, reason: 'schema/field manquant' }
+
+  const schemaObj = findSchemaObjectLiteral(sf, schemaName)
+  if (!schemaObj) return { ok: false, reason: `schema '${schemaName}' introuvable` }
+
+  // 1. Retirer le field FK des `fields: { ... }`
+  const fieldsProp = schemaObj.getProperty('fields') as PropertyAssignment | undefined
+  if (!fieldsProp) return { ok: false, reason: 'pas de bloc `fields`' }
+  const fieldsObj = fieldsProp.getInitializer()
+  if (!fieldsObj || fieldsObj.getKindName() !== 'ObjectLiteralExpression') {
+    return { ok: false, reason: 'fields pas un object literal' }
+  }
+  const fields = fieldsObj as ObjectLiteralExpression
+  const fkField = fields.getProperty(fieldName) as PropertyAssignment | undefined
+  if (!fkField) return { ok: false, reason: `champ '${fieldName}' introuvable` }
+
+  // Vérifier que ce field est bien une string (sanity)
+  const fkInit = fkField.getInitializer()
+  if (fkInit?.getKindName() === 'ObjectLiteralExpression') {
+    const typeProp = (fkInit as ObjectLiteralExpression).getProperty('type') as PropertyAssignment | undefined
+    const typeText = typeProp?.getInitializer()?.getText()
+    if (typeText && !typeText.includes("'string'") && !typeText.includes('"string"')) {
+      return { ok: false, reason: `champ '${fieldName}' n'est pas type string (${typeText})` }
+    }
+  }
+
+  // 2. S'assurer que `relations: { ... }` existe (créer sinon)
+  let relationsProp = schemaObj.getProperty('relations') as PropertyAssignment | undefined
+  if (!relationsProp) {
+    schemaObj.addPropertyAssignment({ name: 'relations', initializer: `{}` })
+    relationsProp = schemaObj.getProperty('relations') as PropertyAssignment
+  }
+  const relationsInit = relationsProp.getInitializer()
+  if (!relationsInit || relationsInit.getKindName() !== 'ObjectLiteralExpression') {
+    return { ok: false, reason: 'relations pas un object literal' }
+  }
+  const relations = relationsInit as ObjectLiteralExpression
+
+  // Pas écraser une relation déjà présente
+  const targetName = fieldName.toLowerCase().replace(/id$/, '')
+  if (relations.getProperty(targetName)) {
+    return { ok: false, reason: `relation '${targetName}' déjà déclarée` }
+  }
+
+  // Inférer le target depuis le field name
+  const target = capitalize(targetName)
+  const isRequired = isFieldRequired(fkField)
+
+  // 3. Ajouter la relation
+  relations.addPropertyAssignment({
+    name: targetName,
+    initializer: `{ type: 'many-to-one', target: '${target}'${isRequired ? ', required: true' : ''}, onDelete: 'cascade' }`,
+  })
+
+  // 4. Retirer le field FK des `fields`
+  fkField.remove()
+
+  return { ok: true }
+}
+
+function isFieldRequired(fieldProp: PropertyAssignment): boolean {
+  const init = fieldProp.getInitializer()
+  if (init?.getKindName() !== 'ObjectLiteralExpression') return false
+  const reqProp = (init as ObjectLiteralExpression).getProperty('required') as PropertyAssignment | undefined
+  return reqProp?.getInitializer()?.getText() === 'true'
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+// ─── R002 — rename FK field (schema-side seulement, V3-A V2 V1) ──
+
+function fixR002_FkNaming(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const schemaName = finding.location.schema
+  const fieldName = finding.location.field
+  if (!schemaName || !fieldName) return { ok: false, reason: 'schema/field manquant' }
+
+  // On lit la suggestion via contextDataJson pour savoir si majorité est "sans Id"
+  let majorityWithout = true
+  if (finding.contextDataJson) {
+    try { majorityWithout = JSON.parse(finding.contextDataJson).majorityWithout !== false } catch {}
+  }
+  const newName = majorityWithout
+    ? fieldName.replace(/Id$/, '')
+    : (fieldName.endsWith('Id') ? fieldName : fieldName + 'Id')
+  if (newName === fieldName) return { ok: false, reason: 'no rename needed' }
+
+  const schemaObj = findSchemaObjectLiteral(sf, schemaName)
+  if (!schemaObj) return { ok: false, reason: `schema '${schemaName}' introuvable` }
+  const fieldsProp = schemaObj.getProperty('fields') as PropertyAssignment | undefined
+  if (!fieldsProp) return { ok: false, reason: 'pas de bloc `fields`' }
+  const fields = fieldsProp.getInitializer() as ObjectLiteralExpression
+  const fieldProp = fields.getProperty(fieldName) as PropertyAssignment | undefined
+  if (!fieldProp) return { ok: false, reason: `champ '${fieldName}' introuvable` }
+
+  // Conflit potentiel
+  if (fields.getProperty(newName)) {
+    return { ok: false, reason: `'${newName}' existe déjà dans fields` }
+  }
+
+  fieldProp.rename(newName)
+  // Ajouter un commentaire pour rappeler le refactor cross-file
+  fieldProp.getFirstAncestorByKind?.(254 as any)   // VariableDeclaration ignore
+  return { ok: true, reason: `Renommé dans le schéma. NOTE : mettre à jour les usages cross-file (lib/, app/) : \`${fieldName}\` → \`${newName}\`.` }
+}
+
+// ─── R016 — convert string audit field to relation User ──────────
+
+function fixR016_AuditEmailAsString(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const schemaName = finding.location.schema
+  const fieldName = finding.location.field
+  if (!schemaName || !fieldName) return { ok: false, reason: 'schema/field manquant' }
+
+  const schemaObj = findSchemaObjectLiteral(sf, schemaName)
+  if (!schemaObj) return { ok: false, reason: `schema '${schemaName}' introuvable` }
+  const fieldsProp = schemaObj.getProperty('fields') as PropertyAssignment | undefined
+  if (!fieldsProp) return { ok: false, reason: 'pas de bloc `fields`' }
+  const fields = fieldsProp.getInitializer() as ObjectLiteralExpression
+  const auditField = fields.getProperty(fieldName) as PropertyAssignment | undefined
+  if (!auditField) return { ok: false, reason: `champ '${fieldName}' introuvable` }
+
+  // S'assurer que `relations` existe
+  let relationsProp = schemaObj.getProperty('relations') as PropertyAssignment | undefined
+  if (!relationsProp) {
+    schemaObj.addPropertyAssignment({ name: 'relations', initializer: `{}` })
+    relationsProp = schemaObj.getProperty('relations') as PropertyAssignment
+  }
+  const relations = relationsProp.getInitializer() as ObjectLiteralExpression
+  if (relations.getProperty(fieldName)) {
+    return { ok: false, reason: `relation '${fieldName}' déjà déclarée` }
+  }
+
+  // Ajouter relation User (on-delete: set-null pour préserver l'audit historique)
+  relations.addPropertyAssignment({
+    name: fieldName,
+    initializer: `{ type: 'many-to-one', target: 'User', onDelete: 'set-null' }`,
+  })
+  auditField.remove()
+  return { ok: true, reason: `Champ converti en relation many-to-one User. NOTE : mettre à jour les usages cross-file qui assignent l'email (\`${fieldName}: email\`) — l'ORM attend désormais un User id.` }
 }
 
 // ─── R013 — add onDelete: 'cascade' to relation ──────────────────

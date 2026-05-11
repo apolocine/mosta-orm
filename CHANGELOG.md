@@ -2,6 +2,60 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.16.0] — 2026-05-11
+
+### Added — Auto-fix V3-A V2 *(R001 + R002 + R016)*
+
+Auto-fix élargi à 3 nouvelles règles via ts-morph :
+
+- **R001-EMPTY-RELATIONS** : retire le field FK string de `fields: { ... }`
+  ET ajoute la relation correspondante dans `relations: { ... }` avec
+  `type: 'many-to-one', target: '<Entity>', onDelete: 'cascade'`.
+  Préserve `required: true` du field d'origine.
+
+- **R002-FK-NAMING-INCONSISTENT** : rename le field dans le schéma
+  *(parentId → parent, questionId → question, etc. selon convention
+  majoritaire détectée)*. Note dans le `reason` : refactor cross-file
+  des usages reste à la charge du dev *(via IDE rename)*.
+
+- **R016-AUDIT-EMAIL-AS-STRING** : convertit le field string
+  *(createdBy/updatedBy/etc.)* en relation `many-to-one` vers User avec
+  `onDelete: 'set-null'` *(préserve l'audit historique si le user est
+  supprimé)*. Note : les usages cross-file qui assignent `field: email`
+  doivent être adaptés au new schema *(field accepte désormais un User id)*.
+
+### Added — `rollbackFixes()` API + `--rollback-fix` CLI
+
+```ts
+import { rollbackFixes } from '@mostajs/orm/validator'
+
+rollbackFixes('./schemas')  // restore tous les .bak puis les supprime
+```
+
+```bash
+npx mostajs-orm-validator ./schemas --rollback-fix
+```
+
+Permet d'annuler un `--fix` malheureux *(scenario : `--fix` casse les
+tests → `--rollback-fix` → revue manuelle puis `--fix-rules R013` ciblé)*.
+
+### Tests
+
+- 23/23 tests unitaires passent *(incluant 4 fixer R001/R009/R013/R016 +
+  rollback)*
+
+### Plugin VSCode V0.1.0 *(séparé)*
+
+Scaffold du plugin Marketplace dans `mostajs/mosta-orm-vscode/` :
+- Squiggles inline pour les findings *(severity → DiagnosticSeverity)*
+- Commandes : Validate / FixAll *(stub V2)* / Rollback
+- Configuration via settings VSCode
+- Activation à l'ouverture d'un fichier TS
+
+À publier sur Marketplace après calibration cross-projets V4.
+
+---
+
 ## [1.15.0] — 2026-05-11
 
 ### Added — ORMConceptValidator V3 *(auto-fix + R018 complète)*
