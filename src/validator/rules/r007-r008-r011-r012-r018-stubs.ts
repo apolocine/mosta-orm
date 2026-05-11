@@ -193,20 +193,6 @@ export const R012_DUPLICATE_IMPLEMENTATION: Rule = {
   },
 }
 
-// ─── R018-EXTERNAL-SCHEMA-OVERSCOPED ──────────────────────────────
-
-export const R018_EXTERNAL_SCHEMA_OVERSCOPED: Rule = {
-  id: 'R018-EXTERNAL-SCHEMA-OVERSCOPED',
-  description: 'Détecte un schema importé depuis un module externe avec beaucoup de champs non utilisés.',
-  defaultSeverity: 'info',
-  needsSource: true,
-  apply(_ctx: RuleContext): Finding[] {
-    // V2 stub : difficile sans AST cross-module. Logique :
-    //   1. Détecter `export { XxxSchema } from 'external-package'` dans schemas/
-    //   2. Pour chaque XxxSchema, scanner usage des fields dans sources
-    //   3. Si ratio used/declared < 0.5 → flagger
-    // Pour V2, on retourne [] et on documente la logique.
-    // Implémentation complète en V3 avec ts-morph.
-    return []
-  },
-}
+// R018-EXTERNAL-SCHEMA-OVERSCOPED — implémentation déplacée vers
+// `./r018-external-schema.ts` (V3-B). Re-export pour rétro-compatibilité.
+export { R018_EXTERNAL_SCHEMA_OVERSCOPED } from './r018-external-schema.js'

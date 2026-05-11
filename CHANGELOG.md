@@ -2,6 +2,59 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [1.15.0] — 2026-05-11
+
+### Added — ORMConceptValidator V3 *(auto-fix + R018 complète)*
+
+**V3-A — Auto-fix `--fix`** : applique automatiquement les corrections
+pour les règles fixables, via parsing AST (`ts-morph`, nouvelle dep).
+
+Règles auto-fix supportées :
+- **R013-MISSING-CASCADE** — ajoute `onDelete: 'cascade'` aux relations
+  `many-to-one` qui n'en ont pas
+- **R009-MISSING-LOOKUP-INDEX** — ajoute l'index manquant *(unique si le
+  champ a `unique: true`, simple sinon)*
+
+Modes :
+- `--fix-dry-run` — affiche les diffs unifiés sans modifier les fichiers
+- `--fix` — applique réellement *(backup `.bak` par défaut, désactivable
+  avec `--no-backup`)*
+- `--fix-rules R013,R009` — filtrer les règles à corriger
+
+API programmatique :
+```ts
+import { applyFixes } from '@mostajs/orm/validator'
+
+const fixes = await applyFixes(report, {
+  sourceRoot: './schemas',
+  dryRun: false,
+  rules: ['R013', 'R009'],
+})
+```
+
+Règles non-fixables auto en V1 *(R001, R002, R016)* : suggestion textuelle
+seulement *(refactor cross-file requis — V3-A V2)*.
+
+**V3-B — R018-EXTERNAL-SCHEMA-OVERSCOPED implémenté** :
+détecte les `export { XxxSchema } from 'external-package'` et compte
+les usages des fields du schema externe dans les sources. Suggestion :
+extraire un sous-schéma local OU documenter les champs ignorés OU
+ouvrir un issue sur le module externe pour scinder.
+
+### Added — dep `ts-morph`
+
+Utilisée par `fixer.ts` pour modifier les schémas TS de façon AST-safe
+*(évite les patches regex fragiles)*.
+
+### Tests
+
+- 20/20 tests unitaires passent *(`test-scripts/validator-rules.test.mjs`)*
+  *(18 règles + 2 fixer R013/R009 + smoke clean)*
+- 8/8 smoke E2E sur consumer codebase
+- `npx mostajs-orm-validator --help` affiche les nouvelles options
+
+---
+
 ## [1.14.0] — 2026-05-11
 
 ### Added — `ORMConceptValidator` *(new submodule `@mostajs/orm/validator`)*

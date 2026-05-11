@@ -16,6 +16,11 @@
 //   --ci                 Exit 1 si findings >= --max-warnings
 //   --max-warnings <n>   Default 0
 //   --verbose            Affiche les suggestions complètes
+//   --fix                Applique les corrections automatiques (V3-A)
+//   --fix-dry-run        Affiche les diffs sans modifier les fichiers
+//   --fix-rules <r1,r2>  Filtre les règles à fixer (default toutes)
+//   --no-backup          Pas de backup .bak en mode --fix
+//   --rollback-fix       Restaure tous les <file>.bak du dernier --fix
 //   -h, --help           Help
 
 import { writeFileSync, readdirSync, statSync } from 'node:fs'
@@ -23,6 +28,7 @@ import { resolve, join } from 'node:path'
 import { createJiti } from 'jiti'
 import { validateSchemas } from './runner.js'
 import { formatText, formatJson, formatMarkdown } from './reporters.js'
+import { applyFixes, rollbackFixes } from './fixer.js'
 import type { ValidateOptions } from './types.js'
 import type { EntitySchema } from '../core/types.js'
 
@@ -42,6 +48,11 @@ Options:
   --ci                       Exit 1 si findings ≥ max-warnings (severity ≥ warning)
   --max-warnings <n>         Seuil pour --ci (default 0)
   --verbose                  Affiche suggestions complètes
+  --fix                      Applique les corrections auto (V3-A)
+  --fix-dry-run              Affiche les diffs sans modifier les fichiers
+  --fix-rules <r1,r2>        Filtre les règles à fixer (default toutes)
+  --no-backup                Pas de backup .bak en mode --fix
+  --rollback-fix             Restaure tous les <file>.bak du dernier --fix
   -h, --help                 Cette aide
 `)
   process.exit(0)
@@ -57,6 +68,9 @@ const ignore: string[] = []
 let ci = false
 let maxWarnings = 0
 let verbose = false
+let fixMode: 'off' | 'apply' | 'dry-run' | 'rollback' = 'off'
+let fixRules: string[] | undefined
+let fixBackup = true
 
 for (let i = 1; i < args.length; i++) {
   const a = args[i]!
@@ -77,6 +91,11 @@ for (let i = 1; i < args.length; i++) {
     case '--ci': ci = true; break
     case '--max-warnings': maxWarnings = Number(args[++i]); break
     case '--verbose': verbose = true; break
+    case '--fix': fixMode = 'apply'; break
+    case '--fix-dry-run': fixMode = 'dry-run'; break
+    case '--rollback-fix': fixMode = 'rollback'; break
+    case '--fix-rules': fixRules = args[++i]!.split(','); break
+    case '--no-backup': fixBackup = false; break
     default:
       console.error(`Unknown option: ${a}`)
       process.exit(2)
@@ -107,6 +126,53 @@ async function main() {
     console.log(`Report written to ${outFile}`)
   } else {
     console.log(output)
+  }
+
+  // ─── Rollback mode (--rollback-fix) ────────────────────────────
+  if (fixMode === 'rollback') {
+    const root = sourceRoot ?? schemasDir
+    console.log(`\n↶ Rollback : restauration des .bak dans ${root}…\n`)
+    const restored = rollbackFixes(root)
+    const ok = restored.filter(r => r.restored).length
+    const fail = restored.filter(r => !r.restored).length
+    for (const r of restored) {
+      console.log(`  ${r.restored ? '✓' : '✗'} ${r.file}${r.reason ? ' — ' + r.reason : ''}`)
+    }
+    console.log(`\n  ${ok} restored, ${fail} failed.`)
+    return
+  }
+
+  // ─── Auto-fix mode (V3-A) ───────────────────────────────────────
+  if (fixMode !== 'off') {
+    const fixRoot = sourceRoot ?? schemasDir
+    const isDry = fixMode === 'dry-run'
+    console.log(`\n${isDry ? '🔍 DRY-RUN' : '🔧 APPLY'} auto-fix on ${fixRoot}${fixRules ? ` (rules: ${fixRules.join(',')})` : ''}…\n`)
+    const fixResults = await applyFixes(report, {
+      sourceRoot: fixRoot,
+      dryRun: isDry,
+      rules: fixRules,
+      backup: fixBackup,
+    })
+
+    const applied = fixResults.filter(r => r.applied)
+    const skipped = fixResults.filter(r => !r.applied)
+    console.log(`  ${applied.length} fix(es) ${isDry ? 'would be applied' : 'applied'}, ${skipped.length} skipped.\n`)
+
+    for (const r of applied) {
+      console.log(`  ✓ ${r.ruleId}  ${r.schema}${r.field ? '.' + r.field : ''}  (${r.file})`)
+    }
+    if (verbose) {
+      for (const r of applied) {
+        if (r.diff) console.log('\n' + r.diff)
+      }
+    }
+    for (const r of skipped) {
+      console.log(`  · skipped ${r.ruleId}  ${r.schema}${r.field ? '.' + r.field : ''}  — ${r.reason}`)
+    }
+
+    if (!isDry && applied.length > 0) {
+      console.log(`\n${fixBackup ? 'Backups: <file>.bak ' : 'No backup. '}Run tests + git diff to review.`)
+    }
   }
 
   if (ci) {

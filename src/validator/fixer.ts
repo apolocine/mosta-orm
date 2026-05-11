@@ -1,0 +1,361 @@
+// @mostajs/orm/validator — fixer (auto-fix via AST)
+// Author: Dr Hamid MADANI <drmdh@msn.com>
+//
+// Implémente l'auto-correction des findings `fixable: true` via ts-morph.
+//
+// Règles supportées V3-A V1 :
+//   R013-MISSING-CASCADE          — ajoute onDelete: 'cascade' aux relations m2o
+//   R009-MISSING-LOOKUP-INDEX     — ajoute un index dédié manquant
+//
+// Règles avec implémentation partielle (suggestion textuelle seulement) :
+//   R001-EMPTY-RELATIONS          — nécessite refactor cross-file (consumers)
+//   R002-FK-NAMING                — rename cross-file
+//   R016-AUDIT-EMAIL-AS-STRING    — conversion field → relation
+//
+// Mode :
+//   - dryRun=true (default) : génère un diff unifié, n'écrit rien
+//   - dryRun=false           : applique les modifications + backup .bak
+
+import { readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { Project, SourceFile, ObjectLiteralExpression, PropertyAssignment } from 'ts-morph'
+import type { Finding, Report } from './types.js'
+
+export interface FixOptions {
+  /** Root du projet — utilisé pour scanner les fichiers .ts contenant les schémas. */
+  sourceRoot: string
+  /** Mode dry-run : génère diff sans modifier le filesystem. Default true. */
+  dryRun?: boolean
+  /** Filtrer les règles à fixer. Default : toutes les règles fixables. */
+  rules?: string[]
+  /** Backup .bak avant modification. Default true en mode non-dry-run. */
+  backup?: boolean
+}
+
+export interface FixResult {
+  ruleId: string
+  schema: string
+  field?: string
+  file: string
+  applied: boolean
+  reason?: string         // si !applied, explique pourquoi
+  diff?: string           // unified diff (toujours présent)
+  description: string
+}
+
+export async function applyFixes(report: Report, opts: FixOptions): Promise<FixResult[]> {
+  const dryRun = opts.dryRun !== false   // dry-run par défaut
+  const allowedRules = opts.rules
+  const backup = opts.backup !== false
+
+  // 1. Charger le projet TS via ts-morph
+  const project = new Project({
+    // Pas de tsconfig — on lit les sources brutes ; le compileur n'a pas
+    // besoin du paths/aliases pour modifier la syntaxe locale.
+    useInMemoryFileSystem: false,
+    skipAddingFilesFromTsConfig: true,
+    skipFileDependencyResolution: true,
+    skipLoadingLibFiles: true,
+  })
+
+  // 2. Trouver tous les fichiers schéma dans sourceRoot
+  const schemaFiles = findSchemaFiles(opts.sourceRoot)
+  for (const f of schemaFiles) {
+    project.addSourceFileAtPathIfExists(f)
+  }
+
+  const results: FixResult[] = []
+
+  // 3. Group les findings par fichier + règle
+  const findingsByFile = new Map<string, Finding[]>()
+  for (const f of report.findings) {
+    if (!f.fixable) continue
+    if (allowedRules && !allowedRules.some(r => f.ruleId.startsWith(r))) continue
+    // Localiser le fichier : si location.file présent, l'utiliser ; sinon, chercher dans schemaFiles
+    let file = f.location.file ? resolve(opts.sourceRoot, f.location.file) : null
+    if (!file && f.location.schema) {
+      file = locateSchemaFile(schemaFiles, f.location.schema) ?? null
+    }
+    if (!file) {
+      results.push({
+        ruleId: f.ruleId, schema: f.location.schema ?? '?', field: f.location.field,
+        file: '?', applied: false, reason: 'fichier source introuvable',
+        description: f.message,
+      })
+      continue
+    }
+    if (!findingsByFile.has(file)) findingsByFile.set(file, [])
+    findingsByFile.get(file)!.push(f)
+  }
+
+  // 4. Pour chaque fichier, appliquer toutes les fixes en une passe (puis save)
+  for (const [filePath, findings] of findingsByFile) {
+    const sf = project.getSourceFile(filePath)
+    if (!sf) {
+      for (const f of findings) {
+        results.push({
+          ruleId: f.ruleId, schema: f.location.schema ?? '?', field: f.location.field,
+          file: filePath, applied: false, reason: 'fichier non chargé par ts-morph',
+          description: f.message,
+        })
+      }
+      continue
+    }
+    const originalText = sf.getFullText()
+
+    for (const f of findings) {
+      const applied = await tryApplyFix(sf, f)
+      results.push({
+        ruleId: f.ruleId,
+        schema: f.location.schema ?? '?',
+        field: f.location.field,
+        file: filePath,
+        applied: applied.ok,
+        reason: applied.reason,
+        description: f.message,
+      })
+    }
+
+    const newText = sf.getFullText()
+    if (newText !== originalText) {
+      // Diff pour le rapport (toujours)
+      for (const r of results) {
+        if (r.file === filePath && !r.diff) r.diff = unifiedDiff(filePath, originalText, newText)
+      }
+      // Écriture si non dry-run
+      if (!dryRun) {
+        if (backup) {
+          try { copyFileSync(filePath, filePath + '.bak') } catch { /* ignore */ }
+        }
+        writeFileSync(filePath, newText, 'utf-8')
+      }
+    }
+  }
+
+  return results
+}
+
+// ─── Dispatcher par règle ─────────────────────────────────────────
+
+async function tryApplyFix(
+  sf: SourceFile, finding: Finding,
+): Promise<{ ok: boolean; reason?: string }> {
+  const ruleId = finding.ruleId
+  if (ruleId.startsWith('R013')) return fixR013_MissingCascade(sf, finding)
+  if (ruleId.startsWith('R009')) return fixR009_MissingIndex(sf, finding)
+  // R001, R002, R016 : nécessitent refactor cross-file complexe — V3-A V2
+  return { ok: false, reason: `Auto-fix de ${ruleId} non implémenté en V3-A V1 (suggestion textuelle seulement)` }
+}
+
+// ─── R013 — add onDelete: 'cascade' to relation ──────────────────
+
+function fixR013_MissingCascade(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const schemaName = finding.location.schema
+  const relName = finding.location.field
+  if (!schemaName || !relName) return { ok: false, reason: 'schema/field manquant dans le finding' }
+
+  const schemaObj = findSchemaObjectLiteral(sf, schemaName)
+  if (!schemaObj) return { ok: false, reason: `schema '${schemaName}' introuvable dans ${sf.getBaseName()}` }
+
+  // Trouver `relations: { … }`
+  const relationsProp = schemaObj.getProperty('relations') as PropertyAssignment | undefined
+  if (!relationsProp) return { ok: false, reason: 'pas de bloc `relations` à modifier' }
+  const relationsObj = relationsProp.getInitializer()
+  if (!relationsObj || relationsObj.getKindName() !== 'ObjectLiteralExpression') {
+    return { ok: false, reason: 'relations n\'est pas un object literal' }
+  }
+  const relations = relationsObj as ObjectLiteralExpression
+
+  // Trouver la propriété correspondant au relName
+  const relProp = relations.getProperty(relName) as PropertyAssignment | undefined
+  if (!relProp) return { ok: false, reason: `relation '${relName}' introuvable` }
+  const relInitializer = relProp.getInitializer()
+  if (!relInitializer || relInitializer.getKindName() !== 'ObjectLiteralExpression') {
+    return { ok: false, reason: 'relation n\'est pas un object literal' }
+  }
+  const relObj = relInitializer as ObjectLiteralExpression
+
+  // Si onDelete déjà présent → no-op
+  if (relObj.getProperty('onDelete')) return { ok: false, reason: 'onDelete déjà défini' }
+
+  // Ajouter onDelete: 'cascade'
+  relObj.addPropertyAssignment({ name: 'onDelete', initializer: `'cascade'` })
+  return { ok: true }
+}
+
+// ─── R009 — add missing index ──────────────────────────────────
+
+function fixR009_MissingIndex(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const schemaName = finding.location.schema
+  const fieldName = finding.location.field
+  if (!schemaName || !fieldName) return { ok: false, reason: 'schema/field manquant' }
+
+  const schemaObj = findSchemaObjectLiteral(sf, schemaName)
+  if (!schemaObj) return { ok: false, reason: `schema '${schemaName}' introuvable` }
+
+  // Déterminer si on veut un index unique : on regarde si le field a unique:true
+  const fieldsProp = schemaObj.getProperty('fields') as PropertyAssignment | undefined
+  if (!fieldsProp) return { ok: false, reason: 'pas de bloc `fields`' }
+  const fieldsObj = fieldsProp.getInitializer()
+  if (!fieldsObj || fieldsObj.getKindName() !== 'ObjectLiteralExpression') {
+    return { ok: false, reason: 'fields pas un object literal' }
+  }
+  const fields = fieldsObj as ObjectLiteralExpression
+  const targetField = fields.getProperty(fieldName) as PropertyAssignment | undefined
+  if (!targetField) return { ok: false, reason: `champ '${fieldName}' introuvable` }
+  const fieldDefInit = targetField.getInitializer()
+  let isUnique = false
+  if (fieldDefInit && fieldDefInit.getKindName() === 'ObjectLiteralExpression') {
+    const uniqueProp = (fieldDefInit as ObjectLiteralExpression).getProperty('unique') as PropertyAssignment | undefined
+    if (uniqueProp && uniqueProp.getInitializer()?.getText() === 'true') isUnique = true
+  }
+
+  // Trouver ou créer `indexes: [ … ]`
+  let indexesProp = schemaObj.getProperty('indexes') as PropertyAssignment | undefined
+  if (!indexesProp) {
+    schemaObj.addPropertyAssignment({ name: 'indexes', initializer: `[]` })
+    indexesProp = schemaObj.getProperty('indexes') as PropertyAssignment
+  }
+  const indexesArr = indexesProp.getInitializer()
+  if (!indexesArr || indexesArr.getKindName() !== 'ArrayLiteralExpression') {
+    return { ok: false, reason: 'indexes n\'est pas un array literal' }
+  }
+
+  // Vérifier qu'il n'y a pas déjà un index sur ce field (par texte simple — robuste)
+  const existingText = indexesArr.getText()
+  if (existingText.includes(`{ fields: { ${fieldName}: `)) {
+    return { ok: false, reason: 'index déjà présent pour ce field' }
+  }
+
+  // Ajouter l'index
+  const newIndexLiteral = isUnique
+    ? `{ fields: { ${fieldName}: 'asc' }, unique: true }`
+    : `{ fields: { ${fieldName}: 'asc' } }`
+
+  ;(indexesArr as any).addElement(newIndexLiteral)
+  return { ok: true }
+}
+
+// ─── Rollback : restaure les .bak vers leur fichier original ────
+
+export interface RollbackResult {
+  file: string
+  restored: boolean
+  reason?: string
+}
+
+/**
+ * Trouve tous les `<file>.bak` dans sourceRoot et les restaure vers `<file>`,
+ * puis supprime le `.bak`. Idempotent : si pas de .bak, no-op.
+ */
+export function rollbackFixes(sourceRoot: string): RollbackResult[] {
+  const results: RollbackResult[] = []
+  const baks: string[] = []
+  walkBak(resolve(sourceRoot))
+  return apply()
+
+  function walkBak(d: string) {
+    let entries: string[]
+    try { entries = readdirSync(d) } catch { return }
+    for (const e of entries) {
+      if (e === 'node_modules' || e === 'dist' || e === '.next' || e === '.git') continue
+      const full = join(d, e)
+      let st
+      try { st = statSync(full) } catch { continue }
+      if (st.isDirectory()) walkBak(full)
+      else if (full.endsWith('.bak')) baks.push(full)
+    }
+  }
+
+  function apply(): RollbackResult[] {
+    for (const bak of baks) {
+      const original = bak.slice(0, -4)   // strip .bak
+      try {
+        if (!existsSync(bak)) {
+          results.push({ file: original, restored: false, reason: 'bak missing' })
+          continue
+        }
+        renameSync(bak, original)
+        results.push({ file: original, restored: true })
+      } catch (e) {
+        results.push({ file: original, restored: false, reason: (e as Error).message })
+      }
+    }
+    return results
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────
+
+function findSchemaFiles(root: string): string[] {
+  const out: string[] = []
+  walk(resolve(root))
+  return out
+  function walk(d: string) {
+    let entries: string[]
+    try { entries = readdirSync(d) } catch { return }
+    for (const e of entries) {
+      if (e === 'node_modules' || e === 'dist' || e === '.next' || e === '.git') continue
+      const full = join(d, e)
+      let st
+      try { st = statSync(full) } catch { continue }
+      if (st.isDirectory()) walk(full)
+      else if ((full.endsWith('.ts') || full.endsWith('.tsx')) && !full.endsWith('.d.ts')) {
+        out.push(full)
+      }
+    }
+  }
+}
+
+function locateSchemaFile(schemaFiles: string[], schemaName: string): string | null {
+  // Cherche `export const <SchemaName>Schema = ` dans chaque fichier
+  const re = new RegExp(`export\\s+const\\s+${escapeRegex(schemaName)}Schema\\s*[:=]`)
+  for (const f of schemaFiles) {
+    try {
+      if (re.test(readFileSync(f, 'utf-8'))) return f
+    } catch { /* skip */ }
+  }
+  return null
+}
+
+function findSchemaObjectLiteral(sf: SourceFile, schemaName: string): ObjectLiteralExpression | null {
+  const varDecl = sf.getVariableDeclaration(`${schemaName}Schema`)
+  if (!varDecl) return null
+  const init = varDecl.getInitializer()
+  if (!init) return null
+  // Cas direct : `export const FooSchema: EntitySchema = { … }`
+  if (init.getKindName() === 'ObjectLiteralExpression') {
+    return init as ObjectLiteralExpression
+  }
+  // Cas avec cast : `{ … } as EntitySchema`
+  if (init.getKindName() === 'AsExpression') {
+    const inner = (init as any).getExpression()
+    if (inner?.getKindName() === 'ObjectLiteralExpression') return inner
+  }
+  return null
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// ─── Diff unifié (simple, pour preview) ──────────────────────
+
+function unifiedDiff(filename: string, before: string, after: string): string {
+  const a = before.split('\n')
+  const b = after.split('\n')
+  // Diff simple ligne-à-ligne (pas le vrai algo de Myers, mais suffit pour preview)
+  // V2 : utiliser une lib `diff` standard.
+  let out = `--- a/${filename}\n+++ b/${filename}\n`
+  let i = 0, j = 0
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) { i++; j++; continue }
+    if (j < b.length) { out += `+${b[j]}\n`; j++; continue }
+    if (i < a.length) { out += `-${a[i]}\n`; i++; continue }
+  }
+  return out
+}

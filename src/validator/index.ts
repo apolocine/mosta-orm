@@ -14,6 +14,7 @@
 
 export { validateSchemas, DEFAULT_RULES } from './runner.js'
 export { formatText, formatJson, formatMarkdown } from './reporters.js'
+export { applyFixes, rollbackFixes, type FixOptions, type FixResult, type RollbackResult } from './fixer.js'
 export type {
   Severity, Finding, Report, ValidateOptions,
   SoftDeletePattern, Thresholds, RuleContext, Rule, SourceFile,
