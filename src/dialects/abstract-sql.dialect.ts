@@ -1603,13 +1603,25 @@ export abstract class AbstractSqlDialect implements IDialect {
     return this.executeQuery<T>(sql, whereParams);
   }
 
-  /** Get relations that should be eagerly loaded (fetch: 'eager' or default eager for M2O/O2O) */
+  /**
+   * Get relations that should be eagerly loaded.
+   *
+   * Default = `lazy` pour TOUTES les relations (M2O, O2O, O2M, M2M).
+   * Le caller doit explicitement opt-in via `rel.fetch = 'eager'` pour
+   * qu'une relation soit auto-populée à la lecture.
+   *
+   * Aligne `@mostajs/orm` sur le comportement moderne (Prisma, Drizzle,
+   * TypeORM 0.3+, MikroORM, SQLAlchemy) — opposé au comportement Hibernate
+   * historique EAGER par défaut pour M2O (anti-pattern documenté).
+   *
+   * Migration depuis < v2.0 : si tu dépendais du populate auto M2O/O2O,
+   * passe `findByIdWithRelations(id, ['project', 'contact'])` ou marque
+   * la relation `fetch: 'eager'` dans son EntitySchema.
+   */
   protected getEagerRelations(schema: EntitySchema): string[] {
     const eager: string[] = [];
     for (const [name, rel] of Object.entries(schema.relations || {})) {
-      const fetchType = rel.fetch
-        || ((rel.type === 'many-to-one' || rel.type === 'one-to-one') ? 'eager' : 'lazy');
-      if (fetchType === 'eager') eager.push(name);
+      if (rel.fetch === 'eager') eager.push(name);
     }
     return eager;
   }
