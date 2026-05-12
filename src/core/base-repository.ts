@@ -10,6 +10,7 @@ import type {
   AggregateStage,
 } from './types.js';
 import { normalizeDoc, normalizeDocs } from './normalizer.js';
+import { resolveLookup } from './introspection.js';
 
 export class BaseRepository<T extends { id: string }> implements IRepository<T> {
   constructor(
@@ -27,8 +28,35 @@ export class BaseRepository<T extends { id: string }> implements IRepository<T> 
     return doc ? normalizeDoc<T>(doc) : null;
   }
 
-  async findById(id: string, options?: QueryOptions): Promise<T | null> {
-    const doc = await this.dialect.findById(this.schema, id, options);
+  /**
+   * Find an entity by its primary key OR by a natural key matching a
+   * unique index of the schema.
+   *
+   * Accepted inputs :
+   * - `string` (or `number`) → primary key lookup (legacy behavior).
+   * - `Record<string, unknown>` with `id` field → primary key lookup
+   *   (useful when caller has a populated relation object).
+   * - `Record<string, unknown>` matching all fields of a unique index
+   *   → natural key lookup (e.g. `findById({ slug: 'foo' })`).
+   * - `null` / `undefined` / `''` → returns `null`.
+   *
+   * Throws `OrmIntrospectionError` if the input is a non-empty object
+   * that matches neither `id` nor a unique index.
+   *
+   * @see docs/TECHNIQUE-INTROSPECTION-FINDONEBYID.md
+   */
+  async findById(
+    idOrEntity: string | number | Record<string, unknown> | null | undefined,
+    options?: QueryOptions,
+  ): Promise<T | null> {
+    const resolved = resolveLookup(this.schema, idOrEntity);
+    if (resolved.kind === 'empty') return null;
+    if (resolved.kind === 'pk') {
+      const doc = await this.dialect.findById(this.schema, resolved.id, options);
+      return doc ? normalizeDoc<T>(doc) : null;
+    }
+    // natural key — délègue à findOne avec le filtre construit
+    const doc = await this.dialect.findOne(this.schema, resolved.filter, options);
     return doc ? normalizeDoc<T>(doc) : null;
   }
 
