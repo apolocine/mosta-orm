@@ -102,6 +102,20 @@ export {
 export { BaseRepository } from './core/base-repository.js';
 
 // ============================================================
+// Introspection — findById polymorphique (2.0+)
+// Permet `findById(string)`, `findById({ id })`, `findById({ uniqueField })`.
+// Doc : docs/TECHNIQUE-INTROSPECTION-FINDONEBYID.md
+// ============================================================
+export {
+  OrmIntrospectionError,
+  resolveLookup,
+  findMatchingUniqueIndex,
+  extractRelId,
+  type ResolvedLookup,
+  type UniqueIndexMatch,
+} from './core/introspection.js';
+
+// ============================================================
 // Utils
 // ============================================================
 export { normalizeDoc, normalizeDocs } from './core/normalizer.js';
