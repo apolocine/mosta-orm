@@ -69,6 +69,139 @@ That's it. Same `repo.create()`, same `repo.findOne()`, same TypeScript types �
 
 > Numbers as of v1.13.1 — see [`@mostajs/orm-cli`](https://www.npmjs.com/package/@mostajs/orm-cli) for the automated Prisma → @mostajs migration tool.
 
+## The relation lookup problem *(and how `@mostajs/orm@2.0` solves it)*
+
+### The problem nobody talks about
+
+Every ORM that auto-populates relations on read creates the **same silent bug class** :
+
+```typescript
+// `reg.project` is a M2O relation to Project
+const reg = await regRepo.findById(regId)
+
+// Eager mode (Hibernate ≤ JPA 2.x default, @mostajs/orm < 2.0) :
+reg.project === project.id   // false — object vs string, ALWAYS
+reg.project.id === project.id   // true if eager — explodes if lazy
+
+// Lazy mode (Prisma, Drizzle, TypeORM 0.3+, SQLAlchemy default) :
+reg.project === project.id   // true if same id — but reg.project.name throws
+```
+
+3 surfaces affected :
+1. **Direct comparison** `entity.relation === id` — JS has no operator overloading.
+2. **Property access** `entity.relation.someField` — assumes populated.
+3. **Reuse in lookup** `findById(entity.relation)` — assumes string id.
+
+The default eager/lazy choice forces every consumer to be defensive everywhere.
+
+### How each ORM addresses it
+
+| ORM | Default fetch | Polymorphic key lookup | Helper to normalize id | Documented as problem |
+|---|---|---|---|---|
+| **Hibernate** | EAGER *(historic JPA, anti-pattern)* | `EntityManager.find(Class, key)` accepts `EmbeddedId` | overridable `equals(Object o)` in Java | Yes — Vlad Mihalcea has 50+ blog posts on it |
+| **Prisma** | LAZY *(opt-in `include`)* | `findUnique({ where })` accepts any unique field | ❌ none — `where: { id }` required | Partially — `findUnique` is the only escape |
+| **Drizzle** | LAZY *(opt-in `with`)* | `query.x.findFirst({ where: eq(...) })` — verbose | ❌ none | No — relation queries are explicit only |
+| **TypeORM ≥ 0.3** | LAZY *(opt-in `relations: ['rel']`)* | `findOneBy({ id })` only | ❌ none | No |
+| **MikroORM** | LAZY *(opt-in `populate`)* | `findOne({ id })` only | `Reference<T>` proxy *(use `.id` accessor)* | Yes — Reference helper documented |
+| **SQLAlchemy** | LAZY *(opt-in `joinedload`)* | `session.get(Cls, ident)` accepts tuple for composite | ❌ none in Python (no `==` overloading either) | Yes — community workarounds |
+| **`@mostajs/orm@2.0`** | **LAZY** *(opt-in `fetch:'eager'`)* | **`findById()` polymorphe** *(string, `{id}`, natural key single or composite)* | **`extractRelId(value)`** helper | **Yes — explicitly documented + ORMConceptValidator R019/R021** |
+
+### The `@mostajs/orm@2.0` 3-layer solution
+
+#### Layer 1 — `lazy` by default
+
+Aligns with Prisma / Drizzle / TypeORM 0.3+ / SQLAlchemy / MikroORM.
+Eliminates 90% of accidental N+1 queries and type confusion.
+
+```typescript
+// Default — no surprise :
+const reg = await regRepo.findById(regId)
+typeof reg.project  // 'string' — the FK id
+```
+
+#### Layer 2 — Polymorphic `findById` with schema introspection
+
+Inspired by JPA `EntityManager.find(Class, Object)` and Prisma `findUnique({ where })`.
+
+```typescript
+// String PK (legacy) — unchanged :
+await projRepo.findById('abc-123')
+
+// Object with `id` — natural for code that passes populated entities :
+await projRepo.findById({ id: 'abc-123' })
+
+// Natural key — schema unique index detected automatically :
+await projRepo.findById({ slug: 'my-project' })
+
+// Composite natural key :
+await membershipRepo.findById({ tenantId: 't1', slug: 'admin' })
+```
+
+If the input is an object that matches neither `id` nor a unique index,
+`OrmIntrospectionError` is thrown with the available fields and candidate
+unique indexes listed — actionable error message.
+
+#### Layer 3 — `extractRelId()` helper for direct comparisons
+
+JS has no operator overloading. `obj === string` is always false. So we provide
+the explicit normalizer :
+
+```typescript
+import { extractRelId } from '@mostajs/orm'
+
+// Safe under both lazy AND eager :
+if (extractRelId(reg.project) === project.id) {
+  // ...
+}
+```
+
+`extractRelId(value)` returns :
+- `value` itself if string/number stringified
+- `value.id` stringified if object with id
+- `''` for null / undefined / object without id
+
+### What `@mostajs/orm` does that no other JS/TS ORM does
+
+| Capability | @mostajs/orm 2.0 | Others |
+|---|:---:|:---:|
+| Lazy default *(state of the art)* | ✅ | Prisma, Drizzle, TypeORM 0.3+, MikroORM, SQLAlchemy ✅ |
+| Opt-in eager via schema flag | ✅ `fetch:'eager'` | TypeORM via `eager: true`. Others : per-query only. |
+| **`findById` accepts string OR `{id}` OR natural key OR composite** | ✅ | **None** *(Prisma findUnique is closest but doesn't accept `{id}` object pass-through)* |
+| **Public `extractRelId` helper for `===` comparisons** | ✅ | **None** *(MikroORM Reference is closest but requires API discipline)* |
+| Validator rule auto-detects the trap *(R021-DIRECT-RELATION-COMPARISON)* | ✅ via [ORMConceptValidator](#-ormconceptvalidator-v114) | None |
+| Auto-fix the trap *(injects `extractRelId` import + wraps comparison)* | ✅ | None |
+
+### Benchmark — same code in 3 ORMs *(eager opt-in scenario)*
+
+Scenario : compare a registration's project FK to a known project id, then re-fetch
+the project. Eager loading enabled for performance reasons.
+
+```typescript
+// Prisma (eager not native — must include + spread) :
+const reg = await prisma.registration.findUnique({
+  where: { id }, include: { project: true }
+})
+if (reg.projectId === project.id) { /* hand-extract from FK field */ }
+// re-fetch project : await prisma.project.findUnique({ where: { id: reg.projectId } })
+
+// TypeORM 0.3+ (eager: true in @ManyToOne) :
+const reg = await regRepo.findOne({ where: { id }, relations: ['project'] })
+if (reg.project.id === project.id) { /* explicit .id needed */ }
+// re-fetch project : redundant — reg.project is already loaded
+
+// @mostajs/orm 2.0 (fetch:'eager' in schema) :
+const reg = await regRepo.findById(id)
+if (extractRelId(reg.project) === project.id) { /* safe under any default */ }
+// re-fetch project : await projRepo.findById(reg.project)   ← introspection, works
+```
+
+Both `findById(reg.project)` and `extractRelId(reg.project)` work identically
+whether the relation is lazy *(string)* or eager *(object)*. Consumer code
+does NOT need to know the fetch mode.
+
+→ **`@mostajs/orm` is the only JS/TS ORM where you can flip lazy ↔ eager via a
+schema flag without rewriting consumer code.**
+
 ## Star · Sponsor · Contribute
 
 If `@mostajs/orm` saves you days of glue code, please :

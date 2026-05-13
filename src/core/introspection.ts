@@ -143,3 +143,39 @@ export function resolveLookup(
     [],
   );
 }
+
+/**
+ * Helper public — extrait l'id d'une référence de relation, qu'elle soit :
+ * - une string id (cas lazy par défaut)
+ * - un objet populé `{ id, ... }` (cas `fetch: 'eager'`)
+ * - null / undefined → retourne `''`
+ *
+ * Utile pour les call-sites consumer qui font des **comparaisons directes**
+ * ou des **accès propriété** que l'introspection findById ne peut pas
+ * couvrir (JavaScript n'a pas d'operator overloading) :
+ *
+ * ```ts
+ * // Avec opt-in fetch:'eager' sur la relation `project` :
+ * import { extractRelId } from '@mostajs/orm'
+ *
+ * // ❌ Toujours false en eager (object !== string) :
+ * if (reg.project === project.id) { ... }
+ *
+ * // ✅ Safe en lazy ET eager :
+ * if (extractRelId(reg.project) === project.id) { ... }
+ * ```
+ *
+ * Pour les call-sites qui appellent `findById(reg.project)`, l'introspection
+ * `findById` polymorphique du `BaseRepository` couvre déjà le cas — pas
+ * besoin de `extractRelId` là.
+ */
+export function extractRelId(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'object') {
+    const id = (value as { id?: unknown }).id;
+    return id === null || id === undefined ? '' : String(id);
+  }
+  return '';
+}
