@@ -110,6 +110,7 @@ export {
   OrmIntrospectionError,
   resolveLookup,
   findMatchingUniqueIndex,
+  extractRelId,
   type ResolvedLookup,
   type UniqueIndexMatch,
 } from './core/introspection.js';

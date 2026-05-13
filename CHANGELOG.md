@@ -2,6 +2,204 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.0.0] — 2026-05-13 *(prepared, not yet published)*
+
+**⚠ Breaking change** — comportement par défaut des relations changé.
+Voir « Migration » en bas de cette entrée.
+
+### Changed — Default fetch `lazy` for ALL relations (étape A)
+
+Inverse le comportement historique du SQL dialect :
+
+| Type relation | < 2.0 (par défaut) | ≥ 2.0 (par défaut) |
+|---|---|---|
+| `many-to-one` | **eager** | **lazy** |
+| `one-to-one` | **eager** | **lazy** |
+| `one-to-many` | lazy | lazy |
+| `many-to-many` | lazy | lazy |
+
+Avant 2.0 : `findById(reg.id)` retournait un objet où `reg.project`
+était l'objet Project **populé** *(remplaçait silencieusement la
+string id)*. Après 2.0 : `reg.project` retourne la **string id**,
+comme attendu par tous les ORMs modernes *(Prisma, Drizzle, TypeORM
+0.3+, SQLAlchemy, MikroORM)* et par le mongo dialect interne (qui
+était déjà lazy → fix de cohérence intra-mosta-orm).
+
+**Opt-in eager** explicite via `fetch: 'eager'` dans la définition
+de relation :
+
+```ts
+relations: {
+  project: { type: 'many-to-one', target: 'Project', fetch: 'eager', onDelete: 'cascade' },
+}
+```
+
+Le comportement Hibernate `FetchType.EAGER` par défaut sur M2O est
+considéré comme anti-pattern *(N+1 queries silencieuses, fuites
+mémoire sur grands datasets, ambiguïté type FK/objet)* — voir
+[Vlad Mihalcea on eager fetching](https://vladmihalcea.com/eager-fetching-is-a-code-smell/).
+
+### Added — `BaseRepository.findById` polymorphique (étape D)
+
+`findById()` accepte désormais 4 formes d'input :
+
+```ts
+// Comportement historique (string PK)
+projRepo.findById('abc-123')
+
+// Number coercé en string
+projRepo.findById(42)
+
+// Objet avec `id` — utile quand on a un objet populé en main
+projRepo.findById({ id: 'abc-123', slug: 'ignored' })   // id wins
+
+// Natural key — matching unique index du schema
+projRepo.findById({ slug: 'my-project' })
+
+// Composite natural key
+membershipRepo.findById({ tenantId: 't1', slug: 'admin' })
+```
+
+**Throw `OrmIntrospectionError`** si l'objet ne matche ni `id` ni un
+unique index *(message explicite listant les fields disponibles et
+les index uniques candidats)*.
+
+Inspirations : Hibernate `EntityManager.find(Class, Object)`, Prisma
+`findUnique({ where })`, SQLAlchemy `Session.get(Cls, ident)`.
+
+### Added — Public exports
+
+```ts
+export {
+  OrmIntrospectionError,    // class
+  resolveLookup,             // schema, input → ResolvedLookup
+  findMatchingUniqueIndex,   // schema, obj → UniqueIndexMatch | null
+  extractRelId,              // value → string id (helper consumer)
+  type ResolvedLookup,
+  type UniqueIndexMatch,
+}
+```
+
+**`extractRelId(value)`** est le helper recommandé pour les
+**comparaisons directes** *(JS n'a pas d'operator overloading,
+donc `===` entre object et string échoue toujours sans coercion)*.
+
+### Piège documenté — `===` direct sur les relations en mode eager
+
+JavaScript ne supporte pas l'operator overloading *(proposition TC39
+en discussion depuis 2014, jamais avancée)*. Conséquence :
+
+```ts
+// Quand fetch:'eager' est activé sur la relation :
+reg.project === project.id   // → false TOUJOURS (object vs string)
+```
+
+`BaseRepository.findById()` polymorphique *(étape D)* résout 90% des
+call-sites consumer. Les **10% restants** *(comparaisons `===`,
+accès propriétés directs)* nécessitent que le consumer s'adapte :
+
+| Pattern | Robuste lazy + eager ? |
+|---|---|
+| `await repo.findById(reg.relation)` | ✅ D résout |
+| `reg.relation === other.id` | ❌ piège — utiliser `extractRelId(reg.relation) === other.id` |
+| `reg.relation.id === other.id` | ⚠ marche en eager uniquement, plante en lazy *(string)* |
+| `extractRelId(reg.relation) === other.id` | ✅ safe partout |
+
+### ORMConceptValidator rules adjustments
+
+- **R019-FINDBYID-OBJECT-INPUT** *(nouvelle warning)* — détecte
+  `findById(entity.relation)` où `entity.relation` peut être
+  objet *(eager)*. Suggestion : OK avec @mostajs/orm@2.0+.
+- **R020-NATURAL-KEY-LOOKUP-OPPORTUNITY** *(nouvelle info)* —
+  signale les `findOne({ uniqueField })` qui pourraient utiliser
+  `findById({ uniqueField })`. Pas d'auto-fix *(les deux ont leur
+  place)*.
+- **R021-DIRECT-RELATION-COMPARISON** *(nouvelle warning)* — détecte
+  `entity.relation === something`. Suggestion : utiliser
+  `extractRelId(entity.relation) === something`. Auto-fix avec
+  injection d'import.
+- **R003B-UNIQUE-WITH-SOFTDELETE-CONFLICT** *(renforcement R003)*.
+- **R013B-EAGER-WITHOUT-CASCADE** *(nouvelle warning)*.
+
+### Migration depuis 1.x → 2.0
+
+#### Cas A — Consumer ne dépendait PAS du populate eager *(majorité)*
+
+Pas de changement visible côté code consumer — `reg.project` était
+déjà utilisé comme string id partout. Bonus : moins de queries
+silencieuses *(N+1 évité)*.
+
+```ts
+// Marche identiquement en 1.x et 2.0+ :
+await projRepo.findById(reg.project)
+```
+
+#### Cas B — Consumer dépendait du populate eager
+
+```ts
+// AVANT 2.0 (eager par défaut) :
+const reg = await regRepo.findById(regId)
+console.log(reg.project.name)   // marche : .project est l'objet
+
+// APRÈS 2.0 (lazy par défaut) :
+// Option 1 — opt-in eager explicit
+relations: { project: { ..., fetch: 'eager' } }
+// → reg.project reste objet, ATTENTION aux comparaisons (voir piège)
+
+// Option 2 — utiliser findByIdWithRelations
+const reg = await regRepo.findByIdWithRelations(regId, ['project'])
+console.log(reg.project.name)   // populate explicite
+
+// Option 3 — fetch séparé (plus explicite, recommandé)
+const reg = await regRepo.findById(regId)
+const project = await projRepo.findById(reg.project)
+console.log(project.name)
+```
+
+#### Cas C — Code legacy avec comparaisons `===` sur relations
+
+Inspecter avec :
+
+```bash
+grep -rnE "\w+\.(project|contact|user|...)\s*===" src/
+```
+
+Pour chaque match : envelopper avec `extractRelId(...)` ou comparer
+les `.id` explicit *(uniquement si tu sais que tu es en eager
+permanent)*.
+
+### Tests
+
+56 tests passent *(test-scripts/introspection-findById.test.mjs)* :
+- 17 tests `resolveLookup` *(empty, string, number, object id,
+  natural key, composite, ambiguïtés, throw cases)*
+- 7 tests `findMatchingUniqueIndex`
+- 14 tests d'intégration `BaseRepository.findById` *(DB SQLite)*
+- 2 tests interaction soft-delete
+- 3 tests régression non-breaking
+- 5 tests edge cases *(round-trip, concurrent, unicode, longueur 500)*
+- 8 tests `extractRelId` helper
+
+### Documentation
+
+- `docs/TECHNIQUE-INTROSPECTION-FINDONEBYID.md` — spec complète,
+  inspirations, articulation A+D, piège `===` documenté, rollback path.
+- `docs/STATE-OF-ART-ORM-VALIDATOR.md` — mise à jour avec R019-R021,
+  positionnement vs Prisma/Drizzle.
+
+### Backups
+
+`mosta-orm/.backups/pre-2.0-D/` contient les versions avant
+modifications pour rollback ciblé :
+
+- `abstract-sql.dialect.ts.before-D` *(avant A + D, eager default)*
+- `abstract-sql.dialect.ts.after-A` *(A seul, lazy default)*
+- `base-repository.ts.before-D` *(avant findById polymorphique)*
+- `types.ts.before-D`
+- `index.ts.before-D`
+
+---
+
 ## [1.17.0] — 2026-05-11
 
 ### Added — Auto-fix V3-A V3 *(R001B + R003 + cascade mitigation)*
