@@ -38,7 +38,9 @@
     "bridge/MostaJdbcBridge.java",
     "wire.json",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "llms.txt",
+    "CHANGELOG.md"
   ],
   "keywords": [
     "orm",
