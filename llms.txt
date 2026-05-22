@@ -1,0 +1,141 @@
+# @mostajs/orm — fiche LLM
+> ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
+
+- Version: 2.0.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/)
+
+## RÔLE
+Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
+ses entités sous forme d'objets `EntitySchema` (fields, relations, indexes) et obtient
+une API CRUD/query identique quel que soit le SGBD cible : MongoDB, SQLite, PostgreSQL,
+MySQL, MariaDB, Oracle, MSSQL, CockroachDB, DB2, SAP HANA, HSQLDB, Spanner, Sybase.
+Concepts empruntés à Hibernate/JPA (CascadeType, FetchType, schemaStrategy = hbm2ddl.auto,
+ConnectionConfig = persistence.xml). C'est le module fondation de l'écosystème mostajs.
+
+## INSTALLATION
+npm i @mostajs/orm
+(driver natif requis selon dialecte : better-sqlite3, pg, mysql2, mariadb, oracledb,
+mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/optional deps)
+
+## EXPORTS
+- Registre schémas : registerSchema, registerSchemas, getSchema, getSchemaByCollection,
+  getAllSchemas, getEntityNames, hasSchema, validateSchemas, clearRegistry
+- Connexion/factory : getDialect, getConfigFromEnv, getCurrentDialectType, disconnectDialect,
+  testConnection, createConnection, createIsolatedDialect, createDatabase, dropDatabase,
+  registerNamedConnection, getNamedConnection, removeNamedConnection, listNamedConnections,
+  clearNamedConnections
+- Dialectes (métadonnées) : DIALECT_CONFIGS, getSupportedDialects, getDialectConfig
+- Repository : BaseRepository, EntityService
+- Introspection : OrmIntrospectionError, resolveLookup, findMatchingUniqueIndex, extractRelId
+- Normalisation : normalizeDoc, normalizeDocs
+- Migration : diffSchemas, generateMigrationSQL
+- Erreurs : MostaORMError, EntityNotFoundError, ConnectionError, ValidationError, DialectNotFoundError
+- Config (ré-export @mostajs/config) : getEnv, getEnvBool, getEnvNumber, getCurrentProfile
+- Types : FieldType, FieldDef, EmbeddedSchemaDef, RelationType, RelationDef, CascadeType,
+  FetchType, OnDeleteAction, IndexType, IndexDef, EntitySchema, FilterOperator, FilterValue,
+  FilterQuery, SortDirection, QueryOptions, PaginatedResult, AggregateStage (et variantes),
+  DialectType, SchemaStrategy, ConnectionConfig, IDialect, IRepository, IPlugin, HookContext,
+  NormalizedDoc, DialectConfig, ResolvedLookup, UniqueIndexMatch, DiffOperation, OrmRequest,
+  OrmResponse, OrmOperation
+
+## EXPORTS PAR SOUS-CHEMIN
+- `@mostajs/orm/register` : register(registry) — déclare l'ORM dans le graphe de dépendances
+  @mostajs/socle (module fondation, ne fournit ni schémas ni repos propres).
+- `@mostajs/orm/bridge` : pont JDBC vers SGBD non-natifs Node via process Java.
+  JdbcNormalizer, parseUri, JDBC_REGISTRY, hasJdbcDriver, getJdbcDriverInfo, BridgeManager,
+  saveJarFile, deleteJarFile, listJarFiles, detectDialectFromJar, getJdbcDialectStatus ;
+  types BridgeInstance, JarUploadResult, JdbcDriverInfo, JdbcBridgeConfig.
+- `@mostajs/orm/validator` : linter conceptuel de schémas (18 règles R001-R018).
+  validateSchemas, DEFAULT_RULES, applyFixes, rollbackFixes, formatText/formatJson/formatMarkdown,
+  DEFAULT_SOFT_DELETE_PATTERNS, DEFAULT_AUDIT_BY_FIELDS, DEFAULT_THRESHOLDS ; types Severity,
+  Finding, Report, ValidateOptions, Rule, RuleContext, etc. Bin : `mostajs-orm-validator`.
+
+## API — SIGNATURES
+- getDialect(config?): Promise<IDialect> — singleton, reconnexion idempotente
+- getConfigFromEnv(): ConnectionConfig — lit DB_DIALECT + SGBD_URI (cascade MOSTA_ENV)
+- createConnection(config, schemas?): Promise<IDialect> — connecte + enregistre schémas
+- createIsolatedDialect(config, schemas?): Promise<IDialect> — connexion neuve hors singleton
+- testConnection(config): Promise<{ ok: boolean; error?: string }>
+- createDatabase / dropDatabase(dialect, uri, dbName): Promise<{ ok; detail?; error? }>
+- registerSchema(schema) / registerSchemas(schemas) : void
+- getSchema(name): EntitySchema (throw si absent) ; getAllSchemas(): EntitySchema[]
+- validateSchemas(): { valid: boolean; errors: string[] } — vérifie cibles de relations
+- diffSchemas(oldSchemas, newSchemas): DiffOperation[]
+- generateMigrationSQL(ops): string[]
+- class BaseRepository<T extends { id: string }> implements IRepository<T>
+  ctor(schema: EntitySchema, dialect: IDialect)
+  findAll(filter?, options?) · findOne(filter, options?) · findById(idOrEntity, options?)
+  findByIdWithRelations(id, relations?, options?) · create(data) · update(id, data)
+  updateMany(filter, data) · delete(id) · deleteMany(filter) · count(filter?)
+  search(query, options?) · distinct(field, filter?) · aggregate(stages) · upsert(filter, data)
+  increment(id, field, amount) · addToSet(id, field, value) · pull(id, field, value)
+  findWithRelations(filter, relations, options?)
+- class EntityService extends EventEmitter
+  ctor(dialect) ; getRepo(name): BaseRepository ; getEntityNames() ; getEntitySchema(name)
+  hasEntity(name) ; findAll/findOne/findById/create/update/delete/count(...) ;
+  execute(req: OrmRequest): Promise<OrmResponse>
+- IDialect : connect/disconnect/testConnection/initSchema + CRUD + aggregate + findWithRelations
+  + upsert/increment/addToSet/pull/search ; optionnels : executeQuery, executeRun,
+  $transaction(cb, opts?), beginTx/commitTx/rollbackTx (API tx manuelle, expérimentale),
+  dropTable/dropAllTables/dropSchema/truncateTable/truncateAll.
+
+## TYPES CLÉS
+- EntitySchema : { name, collection, fields: Record<string,FieldDef>,
+  relations: Record<string,RelationDef>, indexes: IndexDef[], timestamps: boolean,
+  discriminator?, discriminatorValue?, softDelete? }
+- FieldDef : { type: FieldType, required?, unique?, sparse?, default?, enum?, lowercase?,
+  trim?, arrayOf? }  · FieldType = 'string'|'text'|'number'|'boolean'|'date'|'json'|'array'
+- RelationDef : { target, type: RelationType, required?, select?, nullable?, through?,
+  cascade?: CascadeType[], orphanRemoval?, fetch?: FetchType, mappedBy?, joinColumn?,
+  inverseJoinColumn?, onDelete? }
+- RelationType = 'one-to-one'|'many-to-one'|'one-to-many'|'many-to-many'
+- ConnectionConfig : { dialect, uri, showSql?, formatSql?, highlightSql?, schemaStrategy?,
+  poolSize?, cacheEnabled?, cacheTtlSeconds?, batchSize?, options? }
+- SchemaStrategy = 'validate'|'update'|'create'|'create-drop'|'none' (= hbm2ddl.auto)
+- FilterQuery : objet MongoDB-like ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin/$regex/$exists, $or/$and)
+- QueryOptions : { sort?, skip?, limit?, select?, exclude? }
+- IPlugin : hooks onSchemaInit/preSave/postSave/preUpdate/postUpdate/preDelete/onQuery/onResult
+
+## PATTERN
+```ts
+import { createConnection, BaseRepository, type EntitySchema } from '@mostajs/orm';
+
+const UserSchema: EntitySchema = {
+  name: 'User', collection: 'users',
+  fields: { email: { type: 'string', required: true, unique: true },
+            name:  { type: 'string' } },
+  relations: {}, indexes: [], timestamps: true,
+};
+
+const dialect = await createConnection(
+  { dialect: 'sqlite', uri: './app.db', schemaStrategy: 'update' },
+  [UserSchema],
+);
+const users = new BaseRepository<{ id: string; email: string; name?: string }>(UserSchema, dialect);
+await users.create({ email: 'a@b.c', name: 'Alice' });
+const found = await users.findOne({ email: 'a@b.c' });
+```
+
+## DÉPEND DE
+- Runtime : @mostajs/config (cascade env). peerDeps : @mostajs/socle (graphe modules).
+- Drivers SGBD en peer/optional deps (installer seulement ceux utilisés).
+- Pas d'autre dépendance @mostajs/* obligatoire — c'est le module fondation.
+
+## PIÈGES
+- BREAKING 2.0 : toutes les relations sont `lazy` par défaut (avant : many-to-one et
+  one-to-one étaient eager). `findById()` retourne désormais la string id pour ces relations,
+  pas l'objet populé. Utiliser `findByIdWithRelations` / `findWithRelations` pour populer,
+  ou `extractRelId(value)` pour des comparaisons sûres en lazy comme en eager.
+- `getDialect()` est un singleton ; pour plusieurs connexions simultanées utiliser
+  `createIsolatedDialect()` (hors singleton, schémas non enregistrés globalement).
+- `schemaStrategy: 'create'` drop puis recrée ; `'create-drop'` drop à l'arrêt. En prod : `'validate'`.
+- API tx manuelle (beginTx/commitTx/rollbackTx) : expérimentale. Sur dialectes SQL poolés,
+  forcer `poolSize: 1` pour la cohérence stricte ; MongoDB : utiliser `$transaction(cb)`.
+- Ne jamais mettre `cascade: ['remove'|'all']` sur une relation many-to-many (supprimerait l'entité cible).
+- `dropDatabase` est IRRÉVERSIBLE. `findById(objet)` lève `OrmIntrospectionError` si l'objet
+  ne correspond ni à `id` ni à un index unique.
+
+## RÉFÉRENCES
+- README.md · CHANGELOG.md
+- docs/ORMConceptValidator.md, docs/TECHNIQUE-INTROSPECTION-FINDONEBYID.md,
+  docs/MONITORING-orm.md, docs/IDEE-INTRASPECTION-SCHEMAT.md
