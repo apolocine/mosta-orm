@@ -2,6 +2,47 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.3] — 2026-05-25
+
+### Anomalie #8 — `populateRelations` ignorait `joinColumn`
+
+Découverte au premier smoke du sample 11 (`lazy-vs-eager-fetch`) contre
+2.2.2 : `findByIdWithRelations(['project'])` retournait `undefined` au
+lieu de l'objet populé. Cause racine : `populateRelations`
+(`abstract-sql.dialect.ts:1779`) lisait `result[relName]` (par ex.
+`result['project']`) alors que la **colonne FK est `joinColumn`** (par
+ex. `result['projectId']`). Casse latente depuis le fix #2 (2.2.0) qui
+encourage l'usage de `joinColumn` pour avoir une vraie FK SQL déclarée.
+
+Eager fetch (`fetch: 'eager'`) était aussi cassé pour la même raison
+(`findById` appelle `populateRelations`).
+
+#### Fixed
+
+- `populateRelations` lit désormais `relDef.joinColumn || relName` pour
+  récupérer la FK ; le résultat populé est déposé sur `relName` (peut
+  différer de la colonne FK). La FK string reste préservée sur
+  `result[joinColumn]` en parallèle de la propriété populée.
+
+#### Tests
+
+- `test-scripts/populate-joincolumn.test.mjs` :
+  - `findByIdWithRelations(['project'])` retourne `project` populé +
+    `projectId` string préservé
+  - `fetch: 'eager'` populate automatiquement sans appeler
+    `findByIdWithRelations`
+- 122 tests existants verts → 124/124 au total
+
+#### Impact API
+
+Non-breaking. Code consumer qui s'appuyait sur le comportement cassé
+(populate inopérant) gagne désormais la valeur correcte. Pas de
+changement de signature.
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.2.2] — 2026-05-25
 
 ### Anomalie #7 — bugs silencieux résiduels traités
