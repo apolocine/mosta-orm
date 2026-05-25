@@ -16,6 +16,14 @@ Hibernate-inspired multi-dialect ORM for Node.js & TypeScript — **one API, 13 
 📚 **Docs** · *(coming soon)*
 🚀 **Product Hunt** · *(launch link to be added)*
 
+🎓 **Runnable samples** · [`@mostajs/orm-samples`](https://github.com/apolocine/mosta-orm-samples) — copy-paste install per feature, covering 100% of this package's public API.
+
+```bash
+npx @mostajs/orm-samples list                       # browse available samples
+npx @mostajs/orm-samples scaffold 01-quickstart-sqlite ~/my-app
+cd ~/my-app && ./01-quickstart-sqlite.sh            # runnable in 30 seconds
+```
+
 ---
 
 ## Why @mostajs/orm ?
