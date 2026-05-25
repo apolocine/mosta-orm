@@ -418,7 +418,9 @@ export async function dropDatabase(
         await (d as any).executeRun(
           `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${dbName}' AND pid<>pg_backend_pid()`, []
         );
-      } catch {}
+      } catch {
+        // scan-ignore: pg_terminate_backend best-effort — DROP DATABASE diagnostiquera ensuite
+      }
     }
 
     const ddl = getDropDDL(dialect, dbName);

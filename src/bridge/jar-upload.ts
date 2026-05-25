@@ -109,7 +109,7 @@ export function saveJarFile(fileName: string, data: Buffer | Uint8Array): JarUpl
         }
       }
     } catch {
-      // Non-critical
+      // scan-ignore: old JAR cleanup is best-effort
     }
   }
 

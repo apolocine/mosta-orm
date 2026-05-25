@@ -2,6 +2,73 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.2] — 2026-05-25
+
+### Anomalie #7 — bugs silencieux résiduels traités
+
+Audit systématique du code source via le scanner livré
+`test-scripts/scan-silent-bugs.mjs` : **33 findings initiaux** (2 HIGH +
+31 MEDIUM). Tous traités. Spec : `docs/ANOMALIES-LOT3-2026-05-25.md` §7.
+
+#### Added
+
+- **`test-scripts/scan-silent-bugs.mjs`** — scanner statique des bugs
+  silencieux. 6 patterns détectés (EMPTY_CATCH, RETURN_NULL_IN_CATCH,
+  BARE_NUMBER_IGNORE, TODO_FIXME_HACK, SILENT_RETURN_FALSE,
+  CONSOLE_DROP). Annotation `// scan-ignore: <raison>` (sur la ligne du
+  catch, au-dessus, ou dans le body) pour exclure un cas justifié.
+  Exit code = nombre de findings HIGH. Modes texte coloré et JSON.
+
+#### Fixed (visibilité runtime)
+
+Remplacement des `catch {}` silencieux par `catch (e) { this.log(...) }`
+dans les chemins d'opération best-effort — comportement préservé,
+visibilité accrue.
+
+- `abstract-sql.dialect.ts` :
+  - `tableExists` — log si listing échoue
+  - `truncateAll` × 2 — log par table skipped
+  - `dropSchema` × 2 — log par table skipped
+  - `dropAllTables` — log si listing/drop partiel
+- `mongo.dialect.ts` :
+  - `truncateAll` — log par collection skipped
+  - `dropTable` — log si NamespaceNotFound (Mongo code 26)
+  - `dropAllTables` — log par collection skipped
+  - `dropSchema` — log par collection skipped
+  - `testConnection` — log si ping fail
+- `mysql.dialect.ts`, `oracle.dialect.ts`, `db2.dialect.ts`, `hana.dialect.ts` :
+  - `executeIndexStatement` / CREATE INDEX — log "may already exist"
+- `sqlite.dialect.ts`, `spanner.dialect.ts` :
+  - `doTestConnection` / `testConnection` — log si SELECT 1 fail
+
+#### Documented (`scan-ignore`)
+
+Sentinelles légitimes documentées dans le code et le doc spec :
+
+- `bridge/JdbcNormalizer.ts` `findJar` — null = pas de bridge dispo
+- `validator/fixer.ts` `parseFindingContext` — null = JSON invalide (sentinelle JSDoc)
+- `validator/fixer.ts` `removeFieldFromSchema` — fallback textuel
+- `validator/fixer.ts` `fixR002_FK_NAMING` — JSON.parse fallback
+- `bridge/BridgeManager.ts` × 7 — best-effort networking JDBC (health probes,
+  port scans, PID files, orphan cleanup)
+- `bridge/jar-upload.ts` — old JAR cleanup best-effort
+- `core/factory.ts` — `pg_terminate_backend` pre-DROP DATABASE
+- `dialects/abstract-sql.dialect.ts` — INSERT junction duplicate (set semantics)
+
+#### Tests
+
+- Scanner livré : `node test-scripts/scan-silent-bugs.mjs` → **0/0/0**
+  (HIGH/MEDIUM/LOW)
+- 122 tests existants verts (114 validator/introspection + 6 fix Lot 3 + 2 llms-coverage)
+
+#### Impact API
+
+Aucun. Logs supplémentaires only.
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.2.1] — 2026-05-25
 
 ### Anomalie #6 — `onDelete: 'cascade'` silencieusement ignoré sur SQLite

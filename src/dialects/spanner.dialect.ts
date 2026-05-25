@@ -189,7 +189,9 @@ class SpannerDialect extends AbstractSqlDialect {
         run(query: { sql: string }): Promise<[unknown[]]>;
       }).run({ sql: 'SELECT 1' });
       return Array.isArray(rows);
-    } catch {
+    } catch (e) {
+      // scan-ignore: testConnection retourne explicitement boolean — false=down
+      this.log('TEST_CONNECTION', `down: ${(e as Error).message}`);
       return false;
     }
   }

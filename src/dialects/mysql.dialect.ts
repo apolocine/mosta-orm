@@ -86,8 +86,9 @@ export class MySQLDialect extends AbstractSqlDialect {
   protected async executeIndexStatement(stmt: string): Promise<void> {
     try {
       await this.executeRun(stmt, []);
-    } catch {
-      // Index already exists — ignore (MySQL 5.x compat)
+    } catch (e) {
+      // Index already exists — log au lieu de swallow silencieux (MySQL 5.x compat)
+      this.log('CREATE_INDEX', `skipped (may already exist): ${(e as Error).message}`);
     }
   }
 

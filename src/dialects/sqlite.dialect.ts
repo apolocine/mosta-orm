@@ -144,7 +144,9 @@ class SQLiteDialect extends AbstractSqlDialect {
     try {
       this.db.prepare('SELECT 1').get();
       return true;
-    } catch {
+    } catch (e) {
+      // scan-ignore: testConnection retourne explicitement boolean — false=down
+      this.log('TEST_CONNECTION', `down: ${(e as Error).message}`);
       return false;
     }
   }

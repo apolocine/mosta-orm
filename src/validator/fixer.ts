@@ -380,6 +380,7 @@ function parseFindingContext(finding: Finding): Record<string, unknown> | null {
   try {
     return JSON.parse(finding.contextDataJson) as Record<string, unknown>
   } catch {
+    // scan-ignore: fallback documenté dans le JSDoc — null = JSON invalide (sentinelle)
     return null
   }
 }
@@ -441,7 +442,7 @@ function fixR001B_FieldRelationDuplicate(
       }
     }
   } catch {
-    // Fall through au fallback textuel
+    // scan-ignore: fallback textuel intentionnel quand l'AST refuse — voir removeFieldFromSchemaText
   }
   return removeFieldFromSchemaText(sf, schemaName, fieldName)
 }
@@ -572,6 +573,7 @@ function fixR002_FkNaming(
   // On lit la suggestion via contextDataJson pour savoir si majorité est "sans Id"
   let majorityWithout = true
   if (finding.contextDataJson) {
+    // scan-ignore: fallback explicite — majorityWithout reste à `true` (default) si JSON invalide
     try { majorityWithout = JSON.parse(finding.contextDataJson).majorityWithout !== false } catch {}
   }
   const newName = majorityWithout

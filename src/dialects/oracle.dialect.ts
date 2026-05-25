@@ -360,8 +360,9 @@ class OracleDialect extends AbstractSqlDialect {
       for (const stmt of indexStatements) {
         try {
           await this.executeRun(stmt, []);
-        } catch {
-          // Index may already exist — ignore
+        } catch (e) {
+          // Index may already exist — log au lieu de swallow.
+          this.log('CREATE_INDEX', `skipped (may already exist): ${(e as Error).message}`);
         }
       }
     }
