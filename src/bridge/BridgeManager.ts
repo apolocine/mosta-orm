@@ -172,7 +172,7 @@ export class BridgeManager {
         this.removePidFile(bridge.port);
         console.log(`[BridgeManager] Stopped bridge ${key} on port ${bridge.port}`);
       } catch {
-        // Best effort
+        // scan-ignore: best-effort bridge cleanup
       }
     }
     this.bridges.clear();
@@ -299,6 +299,7 @@ export class BridgeManager {
       });
       return res.ok;
     } catch {
+      // scan-ignore: health probe timeout/down — boolean false=unreachable
       return false;
     }
   }
@@ -337,7 +338,7 @@ export class BridgeManager {
           return bridge;
         }
       } catch {
-        // Not a bridge on this port
+        // scan-ignore: port scan — pas un bridge ici, continue
       }
     }
     return null;
@@ -350,6 +351,7 @@ export class BridgeManager {
       });
       return res.ok;
     } catch {
+      // scan-ignore: detect probe — boolean false=pas de bridge sur ce port
       return false;
     }
   }
@@ -388,7 +390,7 @@ export class BridgeManager {
         writeFileSync(join(dir, `.bridge-${port}.pid`), String(pid));
       }
     } catch {
-      // Non-critical
+      // scan-ignore: PID file write/remove — non-critical (orphan cleanup is best-effort)
     }
   }
 
@@ -399,7 +401,7 @@ export class BridgeManager {
         unlinkSync(pidFile);
       }
     } catch {
-      // Non-critical
+      // scan-ignore: PID file write/remove — non-critical (orphan cleanup is best-effort)
     }
   }
 
@@ -441,11 +443,11 @@ export class BridgeManager {
             unlinkSync(join(dir, file));
           }
         } catch {
-          // Ignore individual file errors
+          // scan-ignore: individual PID file parse error — skip and continue
         }
       }
     } catch {
-      // Non-critical — orphan cleanup is best-effort
+      // scan-ignore: orphan cleanup is best-effort
     }
   }
 
@@ -468,7 +470,7 @@ export class BridgeManager {
         bridge.normalizer.stop();
         this.removePidFile(bridge.port);
       } catch {
-        // Best effort
+        // scan-ignore: best-effort bridge cleanup
       }
     }
     this.bridges.clear();

@@ -138,6 +138,7 @@ export class JdbcNormalizer {
       // Return the last (highest version) JAR
       return join(dir, files[files.length - 1]);
     } catch {
+      // scan-ignore: best-effort JAR discovery — null = "pas de bridge JDBC disponible" (caller fallback npm driver)
       return null;
     }
   }
