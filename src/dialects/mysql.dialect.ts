@@ -61,6 +61,15 @@ export class MySQLDialect extends AbstractSqlDialect {
   protected supportsReturning(): boolean { return false; }
 
   /**
+   * MySQL/MariaDB ne supportent pas `CREATE UNIQUE INDEX … WHERE …`
+   * (partial unique index). Sur ces dialects, `sparse: true` est
+   * loggé en warning et la contrainte unique reste globale (réinsertion
+   * après soft-delete bloquée par la contrainte).
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §10.
+   */
+  protected supportsPartialIndex(): boolean { return false; }
+
+  /**
    * MySQL/MariaDB : `SET SESSION TRANSACTION ISOLATION LEVEL` doit précéder
    * `START TRANSACTION` (ou `BEGIN`). La syntaxe ANSI par défaut
    * `BEGIN; SET TRANSACTION ISOLATION LEVEL X` produit un ordre invalide
