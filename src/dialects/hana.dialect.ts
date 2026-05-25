@@ -222,8 +222,8 @@ class HANADialect extends AbstractSqlDialect {
       for (const stmt of indexStatements) {
         try {
           await this.executeRun(stmt, []);
-        } catch {
-          // Index may already exist
+        } catch (e) {
+          this.log('CREATE_INDEX', `skipped (may already exist): ${(e as Error).message}`);
         }
       }
     }

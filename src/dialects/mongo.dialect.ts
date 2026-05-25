@@ -373,7 +373,9 @@ class MongoDialect implements IDialect {
       if (mongoose.connection.readyState !== 1) return false;
       await mongoose.connection.db!.admin().ping();
       return true;
-    } catch {
+    } catch (e) {
+      // scan-ignore: testConnection retourne explicitement boolean — false=down
+      logQuery('TEST_CONNECTION', `down: ${(e as Error).message}`);
       return false;
     }
   }
@@ -802,7 +804,9 @@ class MongoDialect implements IDialect {
         const col = mongoose.connection.collection(schema.collection);
         await col.deleteMany({});
         truncated.push(schema.collection);
-      } catch {}
+      } catch (e) {
+        logQuery('TRUNCATE', `${schema.collection} skipped: ${(e as Error).message}`);
+      }
     }
     return truncated;
   }
@@ -810,7 +814,10 @@ class MongoDialect implements IDialect {
   async dropTable(tableName: string): Promise<void> {
     try {
       await mongoose.connection.collection(tableName).drop();
-    } catch {}
+    } catch (e) {
+      // Collection peut être absente — Mongo throw NamespaceNotFound (code 26). Pas d'erreur fatale.
+      logQuery('DROP_TABLE', `${tableName} skipped: ${(e as Error).message}`);
+    }
   }
 
   async dropAllTables(): Promise<void> {
@@ -818,7 +825,9 @@ class MongoDialect implements IDialect {
     for (const col of collections) {
       try {
         await mongoose.connection.collection(col.name).drop();
-      } catch {}
+      } catch (e) {
+        logQuery('DROP_TABLE', `${col.name} skipped: ${(e as Error).message}`);
+      }
     }
   }
 
@@ -828,7 +837,9 @@ class MongoDialect implements IDialect {
       try {
         await mongoose.connection.collection(schema.collection).drop();
         dropped.push(schema.collection);
-      } catch {}
+      } catch (e) {
+        logQuery('DROP_TABLE', `${schema.collection} skipped: ${(e as Error).message}`);
+      }
     }
     return dropped;
   }

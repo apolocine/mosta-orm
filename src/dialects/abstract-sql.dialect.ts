@@ -1872,7 +1872,7 @@ export abstract class AbstractSqlDialect implements IDialect {
           [id, value]
         );
       } catch {
-        // Duplicate key — ignore (set semantics)
+        // scan-ignore: duplicate key sur INSERT junction — ignore (sémantique set, idempotent)
       }
       return this.findById<Record<string, unknown>>(schema, id);
     }
@@ -2023,7 +2023,9 @@ export abstract class AbstractSqlDialect implements IDialect {
           || Object.values(r)[0];
         return name === tableName;
       });
-    } catch {
+    } catch (e) {
+      // scan-ignore: existence check — false = "table absente OU erreur listing", documenté ainsi
+      this.log('TABLE_EXISTS', `${tableName} check failed: ${(e as Error).message}`);
       return false;
     }
   }
@@ -2045,7 +2047,9 @@ export abstract class AbstractSqlDialect implements IDialect {
           try {
             await this.truncateTable(rel.through);
             truncated.push(rel.through);
-          } catch {}
+          } catch (e) {
+            this.log('TRUNCATE', `${rel.through} skipped: ${(e as Error).message}`);
+          }
         }
       }
     }
@@ -2054,7 +2058,9 @@ export abstract class AbstractSqlDialect implements IDialect {
       try {
         await this.truncateTable(schema.collection);
         truncated.push(schema.collection);
-      } catch {}
+      } catch (e) {
+        this.log('TRUNCATE', `${schema.collection} skipped: ${(e as Error).message}`);
+      }
     }
     return truncated;
   }
@@ -2077,8 +2083,8 @@ export abstract class AbstractSqlDialect implements IDialect {
         }
       }
       this.log('DROP_ALL_TABLES', 'all', { count: rows.length });
-    } catch {
-      // Ignore errors during drop
+    } catch (e) {
+      this.log('DROP_ALL_TABLES', `partial or failed: ${(e as Error).message}`);
     }
   }
 
@@ -2092,7 +2098,9 @@ export abstract class AbstractSqlDialect implements IDialect {
           try {
             await this.dropTable(rel.through);
             dropped.push(rel.through);
-          } catch {}
+          } catch (e) {
+            this.log('DROP_TABLE', `${rel.through} skipped: ${(e as Error).message}`);
+          }
         }
       }
     }
@@ -2101,7 +2109,9 @@ export abstract class AbstractSqlDialect implements IDialect {
       try {
         await this.dropTable(schema.collection);
         dropped.push(schema.collection);
-      } catch {}
+      } catch (e) {
+        this.log('DROP_TABLE', `${schema.collection} skipped: ${(e as Error).message}`);
+      }
     }
     return dropped;
   }
