@@ -86,6 +86,13 @@ class SQLiteDialect extends AbstractSqlDialect {
   protected deserializeBoolean(v: unknown): boolean { return v === 1 || v === true || v === '1'; }
 
   /**
+   * SQLite ne supporte pas `ALTER TABLE … ADD CONSTRAINT FOREIGN KEY` —
+   * les FK doivent être déclarées dans le `CREATE TABLE` initial.
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §6.
+   */
+  protected supportsAlterTableAddForeignKey(): boolean { return false; }
+
+  /**
    * SQLite ne supporte pas la syntaxe ANSI `SET TRANSACTION ISOLATION LEVEL`.
    * Mapping des 4 niveaux ANSI vers les 3 modes SQLite (DEFERRED/IMMEDIATE/EXCLUSIVE).
    * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
