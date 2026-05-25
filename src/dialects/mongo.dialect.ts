@@ -263,13 +263,27 @@ function applyDiscriminatorToData(data: Record<string, unknown>, schema: EntityS
   return { ...data, [schema.discriminator]: schema.discriminatorValue };
 }
 
-function applySoftDeleteFilter(filter: DALFilter, schema: EntitySchema): DALFilter {
-  if (!schema.softDelete || 'deletedAt' in filter) return filter;
+/**
+ * Bypass explicite : `options.includeDeleted === true` retourne le filter inchangé.
+ * Voir docs/ANOMALIES-LOT3-2026-05-25.md §1.
+ */
+function applySoftDeleteFilter(
+  filter: DALFilter,
+  schema: EntitySchema,
+  options?: { includeDeleted?: boolean },
+): DALFilter {
+  if (!schema.softDelete) return filter;
+  if (options?.includeDeleted === true) return filter;
+  if ('deletedAt' in filter) return filter;
   return { ...filter, deletedAt: { $eq: null } };
 }
 
-function applyAllFilters(filter: DALFilter, schema: EntitySchema): DALFilter {
-  return applySoftDeleteFilter(applyDiscriminator(filter, schema), schema);
+function applyAllFilters(
+  filter: DALFilter,
+  schema: EntitySchema,
+  options?: { includeDeleted?: boolean },
+): DALFilter {
+  return applySoftDeleteFilter(applyDiscriminator(filter, schema), schema, options);
 }
 
 // ============================================================
@@ -396,7 +410,7 @@ class MongoDialect implements IDialect {
 
   async find<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T[]> {
     const model = getModel(schema);
-    const mongoFilter = translateFilter(applyAllFilters(filter, schema));
+    const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
     logQuery('FIND', schema.collection, { filter: mongoFilter, options });
     let query = model.find(mongoFilter);
     query = applyOptions(query, options);
@@ -406,7 +420,7 @@ class MongoDialect implements IDialect {
 
   async findOne<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T | null> {
     const model = getModel(schema);
-    const mongoFilter = translateFilter(applyAllFilters(filter, schema));
+    const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
     logQuery('FIND_ONE', schema.collection, { filter: mongoFilter });
     let query = model.findOne(mongoFilter);
     query = applyOptions(query, options);
@@ -416,7 +430,7 @@ class MongoDialect implements IDialect {
 
   async findById<T>(schema: EntitySchema, id: string, options?: QueryOptions): Promise<T | null> {
     const model = getModel(schema);
-    const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
+    const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema, options));
     logQuery('FIND_BY_ID', schema.collection, { id });
     let query = model.findOne(mongoFilter);
     query = applyOptions(query, options);
@@ -477,25 +491,25 @@ class MongoDialect implements IDialect {
 
   // --- Queries ---
 
-  async count(schema: EntitySchema, filter: DALFilter): Promise<number> {
+  async count(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<number> {
     const model = getModel(schema);
-    const mongoFilter = translateFilter(applyAllFilters(filter, schema));
+    const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
     logQuery('COUNT', schema.collection, { filter: mongoFilter });
     return model.countDocuments(mongoFilter);
   }
 
-  async distinct(schema: EntitySchema, field: string, filter: DALFilter): Promise<unknown[]> {
+  async distinct(schema: EntitySchema, field: string, filter: DALFilter, options?: QueryOptions): Promise<unknown[]> {
     const model = getModel(schema);
-    const mongoFilter = translateFilter(applyAllFilters(filter, schema));
+    const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
     logQuery('DISTINCT', schema.collection, { field, filter: mongoFilter });
     return model.distinct(field, mongoFilter);
   }
 
-  async aggregate<T>(schema: EntitySchema, stages: AggregateStage[]): Promise<T[]> {
+  async aggregate<T>(schema: EntitySchema, stages: AggregateStage[], options?: QueryOptions): Promise<T[]> {
     const model = getModel(schema);
 
-    // Inject discriminator + soft-delete as first $match stage
-    const discriminatorMatch = translateFilter(applyAllFilters({}, schema));
+    // Inject discriminator + soft-delete as first $match stage (respecte options.includeDeleted)
+    const discriminatorMatch = translateFilter(applyAllFilters({}, schema, options));
     const pipeline: any[] = Object.keys(discriminatorMatch).length > 0
       ? [{ $match: discriminatorMatch }]
       : [];
