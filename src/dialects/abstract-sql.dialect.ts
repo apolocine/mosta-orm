@@ -230,6 +230,15 @@ export abstract class AbstractSqlDialect implements IDialect {
    */
   protected supportsAlterTableAddForeignKey(): boolean { return true; }
 
+  /**
+   * Certains dialects (MySQL ≤ 8.x, MariaDB) ne supportent pas
+   * `CREATE UNIQUE INDEX … WHERE …` (partial unique index).
+   * Override à `false` dans ces dialects ; les `sparse: true` sur softDelete
+   * seront alors loggés en warning au lieu d'émettre le WHERE.
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §10.
+   */
+  protected supportsPartialIndex(): boolean { return true; }
+
   /** Serialize a JS boolean to a DB value (default: 1/0) */
   protected serializeBoolean(v: boolean): unknown { return v ? 1 : 0; }
 
@@ -911,7 +920,14 @@ export abstract class AbstractSqlDialect implements IDialect {
         else if (typeof defVal === 'number') colDef += ` DEFAULT ${defVal}`;
       }
       if (field.required) colDef += ' NOT NULL';
-      if (field.unique) colDef += ' UNIQUE';
+      // UNIQUE inline : skipped si schema.softDelete ET dialect supporte les
+      // partial indexes (sera alors géré par un partial unique index `WHERE
+      // deletedAt IS NULL` dans generateIndexes — R003B). Sur les dialects
+      // sans partial index (MySQL ≤ 8.x), on garde le UNIQUE inline (mais
+      // réinsertion sera bloquée par la contrainte — log warning émis).
+      // Voir docs/ANOMALIES-LOT3-2026-05-25.md §10.
+      const skipUniqueInline = field.unique && schema.softDelete && this.supportsPartialIndex();
+      if (field.unique && !skipUniqueInline) colDef += ' UNIQUE';
       cols.push(colDef);
     }
 
@@ -981,9 +997,44 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       const idxName = `idx_${schema.collection}_${i}`;
       const colDefs = fields.map(([f, dir]) => `${this.quoteIdentifier(f)} ${dir === 'desc' ? 'DESC' : 'ASC'}`);
-      statements.push(
-        `${this.getCreateIndexPrefix(idxName, idx.unique ?? false)} ON ${this.quoteIdentifier(schema.collection)} (${colDefs.join(', ')})`
-      );
+      let stmt = `${this.getCreateIndexPrefix(idxName, idx.unique ?? false)} ON ${this.quoteIdentifier(schema.collection)} (${colDefs.join(', ')})`;
+      // Partial unique index sur softDelete : sparse:true sur unique index
+      // d'un schéma softDelete → WHERE deletedAt IS NULL. Permet la réinsertion
+      // après soft-delete (R003B). Voir docs/ANOMALIES-LOT3-2026-05-25.md §10.
+      if (idx.unique && idx.sparse && schema.softDelete) {
+        if (this.supportsPartialIndex()) {
+          stmt += ` WHERE ${this.quoteIdentifier('deletedAt')} IS NULL`;
+        } else {
+          this.log('DDL_PARTIAL_INDEX', `${schema.name}.idx_${i}: sparse ignoré (dialect ne supporte pas WHERE) — réinsertion bloquée tant que soft-deleted présent`);
+        }
+      }
+      statements.push(stmt);
+    }
+
+    // Auto-générer un partial unique index pour chaque field.unique d'un schéma
+    // softDelete (le UNIQUE inline est skipped au CREATE TABLE — voir §10).
+    if (schema.softDelete && this.supportsPartialIndex()) {
+      let autoIdx = 0;
+      for (const [name, field] of Object.entries(schema.fields || {})) {
+        if (!field.unique) continue;
+        // Skip si déjà couvert par un index unique explicite sur ce field seul
+        const covered = indexes.some(
+          (i) => i.unique && Object.keys(i.fields).length === 1 && i.fields[name],
+        );
+        if (covered) continue;
+        const idxName = `uidx_${schema.collection}_${name}_softdelete`;
+        statements.push(
+          `${this.getCreateIndexPrefix(idxName, true)} ON ${this.quoteIdentifier(schema.collection)} (${this.quoteIdentifier(name)}) WHERE ${this.quoteIdentifier('deletedAt')} IS NULL`,
+        );
+        autoIdx++;
+      }
+      if (autoIdx > 0) this.log('DDL_AUTO_PARTIAL_UNIQUE', `${schema.name}: ${autoIdx} partial unique index(es) generated for softDelete`);
+    } else if (schema.softDelete && !this.supportsPartialIndex()) {
+      // Si on a au moins un field.unique, prévenir l'utilisateur
+      const hasFieldUnique = Object.values(schema.fields || {}).some(f => f.unique);
+      if (hasFieldUnique) {
+        this.log('DDL_PARTIAL_INDEX', `${schema.name}: softDelete + field.unique mais dialect ne supporte pas partial index — UNIQUE inline réactivé (réinsertion impossible)`);
+      }
     }
 
     return statements;

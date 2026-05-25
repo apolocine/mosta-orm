@@ -2,6 +2,49 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.5] — 2026-05-25
+
+### Anomalie #10 — `sparse: true` silencieusement ignoré (R003B)
+
+Découverte au smoke du sample 13 (`soft-delete-native`) contre 2.2.4 :
+réinsertion d'un email après soft-delete crashait `UNIQUE constraint failed`.
+Cause racine : (a) `field.unique` générait toujours un `UNIQUE` inline,
+(b) `sparse: true` sur l'index unique était **silencieusement ignoré**
+(pas de partial index `WHERE deletedAt IS NULL`).
+
+#### Fixed
+
+- **`generateCreateTable`** : `UNIQUE` inline skipped si `schema.softDelete`
+  ET dialect supporte les partial indexes (sera géré par un partial unique
+  index). Préservé sinon.
+- **`generateIndexes`** : `sparse: true` + `schema.softDelete` →
+  `WHERE deletedAt IS NULL` ajouté au `CREATE UNIQUE INDEX`. Auto-génère un
+  partial unique index pour chaque `field.unique` non couvert par un index
+  explicite.
+- **Nouveau hook `supportsPartialIndex()`** (default `true`). Override
+  `false` dans `MySQLDialect` (et `MariaDBDialect` via héritage) — ces
+  dialects ne supportent pas `CREATE UNIQUE INDEX … WHERE …`. Sur ces
+  dialects, `UNIQUE` inline reste actif + log warning explicite
+  (`DDL_PARTIAL_INDEX`).
+
+#### Tests
+
+- `test-scripts/sparse-partial-unique.test.mjs` :
+  - `sqlite_master` contient un index avec `WHERE deletedAt IS NULL`
+  - create → delete → create avec même email réussit (réinsertion R003B)
+  - Les 2 rows coexistent (1 active + 1 soft-deleted)
+- 125 tests existants verts → 126/126
+
+#### Impact API
+
+Non-breaking. Schémas avec `softDelete` + `field.unique` (ou index
+`unique + sparse`) gagnent automatiquement le bon comportement R003B.
+Aucune signature publique modifiée.
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.2.4] — 2026-05-25
 
 ### Anomalie #9 — `addMissingColumns` ignorait les colonnes système
