@@ -2,6 +2,122 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.0] — 2026-05-25
+
+### Anomalies traitées — chantier Lot 3 samples
+
+Cinq anomalies identifiées pendant la construction du Lot 3 des
+`@mostajs/orm-samples` (samples 10-15 relations/lifecycle). Toutes traitées
+à la cause racine, sans dette ni workaround consumer. Spec complète :
+`docs/ANOMALIES-LOT3-2026-05-25.md`.
+
+#### Added
+
+- **`QueryOptions.includeDeleted?: boolean`** — bypass explicite du filtre
+  automatique soft-delete sur les méthodes read (`find`, `findOne`,
+  `findById`, `count`, `distinct`, `aggregate`, `search`, `findWithRelations`,
+  `findByIdWithRelations`). Sans effet sur les schémas sans
+  `softDelete: true`. Couvre SQL (13 dialects via `AbstractSqlDialect`) **et**
+  MongoDB. Test : `test-scripts/soft-delete-include-deleted.test.mjs`.
+
+- **Doc `ANOMALIES-LOT3-2026-05-25.md`** — spec complète des 5 anomalies
+  avec symptôme, cause racine (fichier:ligne), solution avant/après, test,
+  impact, et **audit par dialect** (5 anomalies × 13 dialects).
+
+- **Lock-tests** pour comportements by-design / déjà corrects :
+  - `test-scripts/findbyid-asymmetry.test.mjs` — `findById(string)` → `null`
+    si introuvable vs `findById(objet invalide)` → `OrmIntrospectionError`
+    (séparation programming error / expected absence).
+  - `test-scripts/schema-strategy-create-drop.test.mjs` — `'create-drop'`
+    drop bien les tables au `disconnect()` (Hibernate `hbm2ddl.auto`).
+
+#### Fixed
+
+- **`duplicate column name` quand FK déclarée 2×** (Anomalie #2) —
+  `generateCreateTable` pré-calcule l'ensemble des colonnes FK générées
+  par les relations (`joinColumn`), et **ignore silencieusement les fields
+  homonymes**. La relation gagne (apporte le type id correct + FK natives).
+  Fix unique dans `AbstractSqlDialect` → propage automatiquement aux 13
+  dialects SQL. Test : `test-scripts/joincolumn-redundant-field.test.mjs`.
+
+- **`$transaction({ isolation })` invalide sur SQLite** (Anomalie #5) —
+  SQLite ne supporte pas la syntaxe ANSI `SET TRANSACTION ISOLATION LEVEL`.
+  Override `beginSql` dans `SQLiteDialect` avec mapping ANSI →
+  modes SQLite : `READ UNCOMMITTED`/`READ COMMITTED` → `DEFERRED`,
+  `REPEATABLE READ` → `IMMEDIATE`, `SERIALIZABLE` → `EXCLUSIVE`. Niveau
+  inconnu → fallback `DEFERRED` + log. Test :
+  `test-scripts/sqlite-isolation-mapping.test.mjs`.
+
+- **Bug latent isolation sur MySQL/MariaDB** (Anomalie #5 propagée) —
+  syntaxe MySQL : `SET SESSION TRANSACTION ISOLATION LEVEL X` doit précéder
+  `START TRANSACTION`. Override dans `MySQLDialect` (MariaDB hérite).
+  Validation E2E via smoke amia multi-dialect.
+
+- **Niveaux isolation non supportés ignorés silencieusement** sur Oracle,
+  HANA, DB2 (Anomalie #5 extensions) :
+  - **Oracle** : Oracle ne supporte que 2 niveaux. Mapping 4-niveaux ANSI
+    → 2-niveaux Oracle (`READ UNCOMMITTED`/`READ COMMITTED` → `READ
+    COMMITTED`, `REPEATABLE READ`/`SERIALIZABLE` → `SERIALIZABLE`).
+  - **HANA** : `READ UNCOMMITTED` non supporté → mapped à `READ COMMITTED`
+    avec log explicite.
+  - **DB2** : DB2 utilise UR/CS/RS/RR, pas ANSI. Mapping ajouté
+    (`READ UNCOMMITTED` → `UR`, `READ COMMITTED` → `CS`, etc.).
+
+- **MongoDB** : `applySoftDeleteFilter` étendu de la même façon que SQL —
+  bypass via `options.includeDeleted: true`. Propagé sur les sites read.
+
+### Changed — API non-breaking
+
+Trois signatures `IDialect` et trois signatures `IRepository` acceptent un
+nouveau paramètre `options?: QueryOptions` optionnel à la fin (compatible
+avec tous les appels existants) :
+
+- `IDialect.count(schema, filter, options?)`
+- `IDialect.distinct(schema, field, filter, options?)`
+- `IDialect.aggregate(schema, stages, options?)`
+- `IRepository.count(filter?, options?)`
+- `IRepository.distinct(field, filter?, options?)`
+- `BaseRepository.aggregate(stages, options?)`
+
+### Documented — comportements by-design
+
+- **Asymétrie `findById`** (Anomalie #3) — `findById(string)` retourne
+  `null` si introuvable ; `findById(objet)` lève `OrmIntrospectionError`
+  si l'objet ne match ni `id` ni un index unique. Distinction
+  *programming error* (throw — caller corrige) vs *expected absence*
+  (null — business). Comportement intentionnel, désormais verrouillé par
+  test (`findbyid-asymmetry.test.mjs`).
+
+- **`softDelete` détaillé** dans le `llms.txt` : injection auto `deletedAt`,
+  filtre auto sur reads, `delete()` devient soft-delete, opt-in
+  `includeDeleted` (nouveau 2.2.0).
+
+- **`TxHandle`** typé : `{ id: string; startedAt: number; depth: number }`
+  (`depth === 1` = transaction réelle, `depth >= 2` = SAVEPOINT nested).
+
+- **`DiffOperation`** : 14 variantes typées listées dans le `llms.txt`.
+
+- **`applyFixes` / `rollbackFixes`** : `FixOptions` et `FixResult`
+  documentés (sourceRoot, dryRun défaut true, rules?, backup défaut true).
+
+- **Erreurs typées** : bloc dédié dans le `llms.txt` — ctor + scénario
+  de levée pour chacune des 6 classes d'erreurs publiques.
+
+### Non-Breaking
+
+Tous les changements sont rétrocompatibles. Code consumer 2.1.0 fonctionne
+sans modification sur 2.2.0.
+
+### Tests
+
+- 5 nouveaux tests dédiés aux anomalies traitées (Fix #1/#2/#5 + lock #3/#4).
+- 114 tests existants (validator-rules + introspection-findById) restent verts.
+- 2 tests llms-txt-coverage restent à 100% de couverture API publique.
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.1.0] — 2026-05-25
 
 ### Added — 5 nouvelles règles validator *(comblement de dette doc/code)*

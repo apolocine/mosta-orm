@@ -85,6 +85,27 @@ class SQLiteDialect extends AbstractSqlDialect {
   protected serializeBoolean(v: boolean): unknown { return v ? 1 : 0; }
   protected deserializeBoolean(v: unknown): boolean { return v === 1 || v === true || v === '1'; }
 
+  /**
+   * SQLite ne supporte pas la syntaxe ANSI `SET TRANSACTION ISOLATION LEVEL`.
+   * Mapping des 4 niveaux ANSI vers les 3 modes SQLite (DEFERRED/IMMEDIATE/EXCLUSIVE).
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
+   */
+  protected beginSql(opts?: { isolation?: string }): string | null {
+    if (!opts?.isolation) return 'BEGIN';
+    switch (opts.isolation) {
+      case 'READ UNCOMMITTED':
+      case 'READ COMMITTED':
+        return 'BEGIN DEFERRED TRANSACTION';
+      case 'REPEATABLE READ':
+        return 'BEGIN IMMEDIATE TRANSACTION';
+      case 'SERIALIZABLE':
+        return 'BEGIN EXCLUSIVE TRANSACTION';
+      default:
+        this.log('TX', `isolation level '${opts.isolation}' non reconnu pour SQLite — fallback DEFERRED`);
+        return 'BEGIN DEFERRED TRANSACTION';
+    }
+  }
+
   // --- Connection lifecycle (sync → async normalizer) ---
 
   async doConnect(config: ConnectionConfig): Promise<void> {

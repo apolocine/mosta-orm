@@ -81,16 +81,35 @@ class OracleDialect extends AbstractSqlDialect {
    * - `PURGE` skips the recycle bin so the table can be recreated immediately
    */
   /**
-   * Oracle has implicit transactions — there is no SQL `BEGIN` keyword.
-   * The default `AbstractSqlDialect.beginSql()` returns "BEGIN" which on
-   * Oracle is interpreted as a PL/SQL block opener — `BEGIN ;` alone is
-   * malformed → ORA-06550 PLS-00103. Override to skip BEGIN entirely
-   * (return null) ; SET TRANSACTION ISOLATION LEVEL is used only when
-   * the caller asks for a specific isolation.
+   * Oracle a des transactions implicites — pas de SQL `BEGIN`. Le défaut
+   * `AbstractSqlDialect.beginSql()` retourne "BEGIN" qui est un opener
+   * PL/SQL → ORA-06550 PLS-00103. Override : skip BEGIN (return null).
+   *
+   * Oracle ne supporte que 2 niveaux d'isolation : READ COMMITTED (défaut)
+   * et SERIALIZABLE. Mapping ANSI 4-niveaux → 2-niveaux Oracle :
+   *   READ UNCOMMITTED → READ COMMITTED (alias raisonnable)
+   *   READ COMMITTED   → READ COMMITTED
+   *   REPEATABLE READ  → SERIALIZABLE (palier au-dessus)
+   *   SERIALIZABLE     → SERIALIZABLE
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
    */
   protected beginSql(opts?: { isolation?: string }): string | null {
-    if (opts?.isolation) return `SET TRANSACTION ISOLATION LEVEL ${opts.isolation}`;
-    return null;
+    if (!opts?.isolation) return null;
+    let level: string;
+    switch (opts.isolation) {
+      case 'READ UNCOMMITTED':
+      case 'READ COMMITTED':
+        level = 'READ COMMITTED';
+        break;
+      case 'REPEATABLE READ':
+      case 'SERIALIZABLE':
+        level = 'SERIALIZABLE';
+        break;
+      default:
+        this.log('TX', `isolation level '${opts.isolation}' non reconnu pour Oracle — fallback READ COMMITTED`);
+        level = 'READ COMMITTED';
+    }
+    return `SET TRANSACTION ISOLATION LEVEL ${level}`;
   }
 
   // Oracle supports SAVEPOINT and ROLLBACK TO SAVEPOINT, but NOT

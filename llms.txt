@@ -1,8 +1,8 @@
 # @mostajs/orm — fiche LLM
 > ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
 
-- Version: 2.1.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
-- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/)
+- Version: 2.2.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies Lot 3 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md)
 
 ## RÔLE
 Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
@@ -39,12 +39,15 @@ mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/option
   SortDirection, QueryOptions, PaginatedResult, AggregateStage (et variantes),
   DialectType, SchemaStrategy ('validate'|'update'|'create'|'create-drop'|'none'),
   ConnectionConfig, IDialect, IRepository, IPlugin, HookContext, NormalizedDoc,
-  TxHandle (poignée tx manuelle, expérimentale), DialectConfig, ResolvedLookup,
-  UniqueIndexMatch, DiffOperation, OrmRequest, OrmResponse, OrmOperation
+  TxHandle ({ id: string; startedAt: number; depth: 1=outermost / 2+=nested SAVEPOINT } — expérimentale),
+  DialectConfig, ResolvedLookup, UniqueIndexMatch, DiffOperation (14 variantes — cf. TYPES CLÉS),
+  OrmRequest, OrmResponse, OrmOperation
 
 ## EXPORTS PAR SOUS-CHEMIN
-- `@mostajs/orm/register` : register(registry) — déclare l'ORM dans le graphe de dépendances
-  @mostajs/socle (module fondation, ne fournit ni schémas ni repos propres).
+- `@mostajs/orm/register` : `register(registry: { register(r: ModuleRegistration): void }): void`
+  — déclare l'ORM dans le graphe de dépendances @mostajs/socle (`ModuleRegistration` provient de
+  `@mostajs/socle`). Le module fondation n'expose ni schémas ni repos propres ; cette fonction
+  rend simplement l'ORM visible aux modules en aval qui veulent dépendre de lui par déclaration.
 - `@mostajs/orm/bridge` : pont JDBC vers SGBD non-natifs Node via process Java.
   JdbcNormalizer, parseUri, JDBC_REGISTRY, hasJdbcDriver, getJdbcDriverInfo, BridgeManager,
   saveJarFile, deleteJarFile, listJarFiles, detectDialectFromJar, getJdbcDialectStatus ;
@@ -53,7 +56,13 @@ mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/option
   + R003B + R004B + R013B + R019/R020/R021 ajoutées en 2.1.0 — voir bloc PIÈGES).
   validateSchemas, DEFAULT_RULES, applyFixes, rollbackFixes, formatText/formatJson/formatMarkdown,
   DEFAULT_SOFT_DELETE_PATTERNS, DEFAULT_AUDIT_BY_FIELDS, DEFAULT_THRESHOLDS ; types Severity,
-  Finding, Report, ValidateOptions, Rule, RuleContext, etc. Bin : `mostajs-orm-validator`.
+  Finding, Report, ValidateOptions, Rule, RuleContext, FixOptions, FixResult, RollbackResult.
+  Bin : `mostajs-orm-validator`.
+  - `applyFixes(report: Report, opts: FixOptions): Promise<FixResult[]>`
+    `FixOptions = { sourceRoot: string; dryRun?: boolean = true; rules?: string[]; backup?: boolean = true }`
+    `FixResult = { ruleId, schema, field?, file, applied, reason?, diff?, description }`
+  - `rollbackFixes(sourceRoot: string): RollbackResult[]` — restaure tous les `<file>.bak`
+    présents sous `sourceRoot`, supprime les `.bak` après restauration ; idempotent.
   Les règles R019-R021 nécessitent `sourceRoot` dans les options pour faire de la
   détection AST cross-file via ts-morph sur le code consumer. Auto-fix R019/R021
   livré 2.1.0 (insert import extractRelId + wrap, idempotent, .bak backup).
@@ -85,18 +94,36 @@ mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/option
   ctor(schema: EntitySchema, dialect: IDialect)
   findAll(filter?, options?) · findOne(filter, options?) · findById(idOrEntity, options?)
   findByIdWithRelations(id, relations?, options?) · create(data) · update(id, data)
-  updateMany(filter, data) · delete(id) · deleteMany(filter) · count(filter?)
-  search(query, options?) · distinct(field, filter?) · aggregate(stages) · upsert(filter, data)
+  updateMany(filter, data) · delete(id) · deleteMany(filter)
+  count(filter?, options?) · search(query, options?)
+  distinct(field, filter?, options?) · aggregate(stages, options?) · upsert(filter, data)
   increment(id, field, amount) · addToSet(id, field, value) · pull(id, field, value)
   findWithRelations(filter, relations, options?)
+  Toutes les méthodes read acceptent `options?: QueryOptions` ; `includeDeleted: true`
+  bypasse le filtre soft-delete (2.2.0).
 - class EntityService extends EventEmitter
   ctor(dialect) ; getRepo(name): BaseRepository ; getEntityNames() ; getEntitySchema(name)
   hasEntity(name) ; findAll/findOne/findById/create/update/delete/count(...) ;
   execute(req: OrmRequest): Promise<OrmResponse>
 - IDialect : connect/disconnect/testConnection/initSchema + CRUD + aggregate + findWithRelations
-  + upsert/increment/addToSet/pull/search ; optionnels : executeQuery, executeRun,
-  $transaction(cb, opts?), beginTx/commitTx/rollbackTx (API tx manuelle, expérimentale),
-  dropTable/dropAllTables/dropSchema/truncateTable/truncateAll.
+  + upsert/increment/addToSet/pull/search ; signatures notables (2.2.0) :
+  - `count(schema, filter, options?: QueryOptions)`
+  - `distinct(schema, field, filter, options?: QueryOptions)`
+  - `aggregate(schema, stages, options?: QueryOptions)`
+  Optionnels :
+  - executeQuery / executeRun (SQL brut, opt-in dialect)
+  - $transaction<T>(cb, opts?: { isolation?: 'READ UNCOMMITTED'|'READ COMMITTED'|'REPEATABLE READ'|'SERIALIZABLE' }): Promise<T>
+  - beginTx(opts?: { isolation? }): Promise<TxHandle> · commitTx(tx): Promise<void> · rollbackTx(tx): Promise<void>
+    (API tx manuelle, expérimentale ; `poolSize: 1` requis sur dialectes SQL poolés ; MongoDB : utiliser $transaction(cb))
+  - dropTable / dropAllTables / dropSchema / truncateTable / truncateAll.
+
+  Mapping isolation par dialect (2.2.0) :
+  - SQLite : ANSI → DEFERRED/IMMEDIATE/EXCLUSIVE
+  - MySQL/MariaDB : `SET SESSION TRANSACTION ISOLATION LEVEL X; START TRANSACTION`
+  - Oracle : 2 niveaux uniquement (READ COMMITTED, SERIALIZABLE) — mapping auto pour les 4 ANSI
+  - HANA : READ UNCOMMITTED non supporté → mappé à READ COMMITTED
+  - DB2 : ANSI → UR/CS/RS/RR (vocabulaire DB2 natif)
+  - Postgres/CockroachDB/MSSQL : ANSI nativement supportés
 
 ## TYPES CLÉS
 - EntitySchema : { name, collection, fields: Record<string,FieldDef>,
@@ -112,8 +139,37 @@ mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/option
   poolSize?, cacheEnabled?, cacheTtlSeconds?, batchSize?, options? }
 - SchemaStrategy = 'validate'|'update'|'create'|'create-drop'|'none' (= hbm2ddl.auto)
 - FilterQuery : objet MongoDB-like ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin/$regex/$exists, $or/$and)
-- QueryOptions : { sort?, skip?, limit?, select?, exclude? }
+- QueryOptions : { sort?, skip?, limit?, select?, exclude?, includeDeleted? }
+  - `includeDeleted?: boolean` (2.2.0) — bypasse le filtre soft-delete automatique
+    sur read methods. Sans effet si `softDelete: true` n'est pas activé sur le schéma.
 - IPlugin : hooks onSchemaInit/preSave/postSave/preUpdate/postUpdate/preDelete/onQuery/onResult
+- TxHandle (lecture seule) : `{ id: string; startedAt: number; depth: 1|2|... }`
+  — `depth === 1` = transaction réelle (BEGIN/COMMIT), `depth >= 2` = nested SAVEPOINT.
+- DiffOperation (union discriminée — 14 variantes, type = discriminant) :
+  - `{ type: 'addEntity'; schema: EntitySchema }`
+  - `{ type: 'removeEntity'; entity: string; collection: string }`
+  - `{ type: 'addField'; entity; field; def: FieldDef }`
+  - `{ type: 'removeField'; entity; field }`
+  - `{ type: 'alterField'; entity; field; from: FieldDef; to: FieldDef }`
+  - `{ type: 'addIndex'; entity; index: IndexDef }` · `{ type: 'removeIndex'; entity; index }`
+  - `{ type: 'renameCollection'; entity; from; to }`
+  - `{ type: 'addTimestamps'; entity }` · `{ type: 'removeTimestamps'; entity }`
+  - `{ type: 'addSoftDelete'; entity }` · `{ type: 'removeSoftDelete'; entity }`
+  - `{ type: 'addDiscriminator'; entity; field; value }` · `{ type: 'removeDiscriminator'; entity; field }`
+
+## ERREURS TYPÉES — QUAND LEVÉES
+- `MostaORMError(message)` — racine de toutes les erreurs ORM (catch générique).
+- `EntityNotFoundError(entityName, id?)` — levée par `update(id, …)` / `delete(id)` quand `id`
+  n'existe pas. Pas levée par `findById` / `findOne` (qui retournent `null`).
+- `ConnectionError(dialect, cause?)` — levée par `createConnection` / `testConnection`
+  quand l'URI est invalide, le driver natif manque, ou le SGBD refuse la session.
+- `ValidationError(entityName, details)` — levée à `create` / `update` quand un field `required`
+  est absent, qu'un `enum` est violé, ou qu'un `unique` est dupliqué (selon dialect).
+- `DialectNotFoundError(dialect)` — levée par `getDialect({ dialect: 'inconnu' })` si la valeur
+  ne correspond à aucun `DialectType` supporté (cf. `getSupportedDialects()`).
+- `OrmIntrospectionError` (introspection, pas une `MostaORMError`) — levée par `findById({…})`
+  quand l'objet ne matche ni `id`, ni un index unique ; expose `schemaName`, `input`,
+  `availableFields`, candidates de matching pour message actionnable.
 
 ## PATTERN
 ```ts
@@ -148,6 +204,14 @@ const found = await users.findOne({ email: 'a@b.c' });
 - `getDialect()` est un singleton ; pour plusieurs connexions simultanées utiliser
   `createIsolatedDialect()` (hors singleton, schémas non enregistrés globalement).
 - `schemaStrategy: 'create'` drop puis recrée ; `'create-drop'` drop à l'arrêt. En prod : `'validate'`.
+- `softDelete: true` sur un `EntitySchema` :
+  - **injecte automatiquement** le champ `deletedAt: Date | null`. Pas besoin de le déclarer.
+  - **filtre automatiquement** `findAll` / `findOne` / `findById` / `count` / `search` /
+    `aggregate` sur `deletedAt IS NULL` (SQL) ou `deletedAt: null` (Mongo).
+  - `delete(id)` devient un soft-delete (UPDATE `deletedAt = now`), pas un DELETE physique.
+  - **Pas d'option `includeDeleted`** côté repo en 2.1.0. Pour récupérer une ligne soft-deletée,
+    filtrer explicitement : `findOne({ deletedAt: { $ne: null } })` ou `findAll({ deletedAt: { $exists: true } })`.
+  - Compatible `sparse: true` sur unique indexes → réinsertion possible après soft-delete (R003B).
 - API tx manuelle (beginTx/commitTx/rollbackTx) : expérimentale, type `TxHandle`. Sur dialectes
   SQL poolés, forcer `poolSize: 1` pour la cohérence stricte ; MongoDB : utiliser `$transaction(cb)`.
 - Ne jamais mettre `cascade: ['remove'|'all']` sur une relation many-to-many (supprimerait l'entité cible).

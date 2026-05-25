@@ -90,8 +90,8 @@ export class BaseRepository<T extends { id: string }> implements IRepository<T> 
     return this.dialect.deleteMany(this.schema, filter);
   }
 
-  async count(filter: FilterQuery = {}): Promise<number> {
-    return this.dialect.count(this.schema, filter);
+  async count(filter: FilterQuery = {}, options?: QueryOptions): Promise<number> {
+    return this.dialect.count(this.schema, filter, options);
   }
 
   async search(query: string, options?: QueryOptions): Promise<T[]> {
@@ -103,12 +103,12 @@ export class BaseRepository<T extends { id: string }> implements IRepository<T> 
     return normalizeDocs<T>(docs);
   }
 
-  async distinct(field: string, filter: FilterQuery = {}): Promise<unknown[]> {
-    return this.dialect.distinct(this.schema, field, filter);
+  async distinct(field: string, filter: FilterQuery = {}, options?: QueryOptions): Promise<unknown[]> {
+    return this.dialect.distinct(this.schema, field, filter, options);
   }
 
-  async aggregate<R = Record<string, unknown>>(stages: AggregateStage[]): Promise<R[]> {
-    return this.dialect.aggregate<R>(this.schema, stages);
+  async aggregate<R = Record<string, unknown>>(stages: AggregateStage[], options?: QueryOptions): Promise<R[]> {
+    return this.dialect.aggregate<R>(this.schema, stages, options);
   }
 
   async upsert(filter: FilterQuery, data: Partial<T>): Promise<T> {

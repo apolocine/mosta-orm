@@ -61,10 +61,21 @@ class HANADialect extends AbstractSqlDialect {
    * HANA supports `CASCADE` on DROP but not `IF EXISTS`. Catch error 259
    * "invalid table name" so calling drop on a missing table is a no-op.
    */
-  /** HANA uses implicit transactions ; standalone BEGIN is invalid. */
+  /**
+   * HANA a des transactions implicites — standalone BEGIN invalide.
+   * HANA supporte READ COMMITTED, REPEATABLE READ, SERIALIZABLE (pas
+   * READ UNCOMMITTED). Mapping ANSI :
+   *   READ UNCOMMITTED → READ COMMITTED (alias raisonnable)
+   *   autres niveaux supportés tels quels
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
+   */
   protected beginSql(opts?: { isolation?: string }): string | null {
-    if (opts?.isolation) return `SET TRANSACTION ISOLATION LEVEL ${opts.isolation}`;
-    return null;
+    if (!opts?.isolation) return null;
+    const level = opts.isolation === 'READ UNCOMMITTED' ? 'READ COMMITTED' : opts.isolation;
+    if (opts.isolation === 'READ UNCOMMITTED') {
+      this.log('TX', "isolation 'READ UNCOMMITTED' non supporté par HANA — fallback READ COMMITTED");
+    }
+    return `SET TRANSACTION ISOLATION LEVEL ${level}`;
   }
 
   async dropTable(tableName: string): Promise<void> {
