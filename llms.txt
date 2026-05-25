@@ -1,7 +1,7 @@
 # @mostajs/orm — fiche LLM
 > ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
 
-- Version: 2.0.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Version: 2.1.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
 - Chemin: mostajs/mosta-orm · Statut audit: complet (dist/)
 
 ## RÔLE
@@ -31,12 +31,16 @@ mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/option
 - Migration : diffSchemas, generateMigrationSQL
 - Erreurs : MostaORMError, EntityNotFoundError, ConnectionError, ValidationError, DialectNotFoundError
 - Config (ré-export @mostajs/config) : getEnv, getEnvBool, getEnvNumber, getCurrentProfile
-- Types : FieldType, FieldDef, EmbeddedSchemaDef, RelationType, RelationDef, CascadeType,
-  FetchType, OnDeleteAction, IndexType, IndexDef, EntitySchema, FilterOperator, FilterValue,
-  FilterQuery, SortDirection, QueryOptions, PaginatedResult, AggregateStage (et variantes),
-  DialectType, SchemaStrategy, ConnectionConfig, IDialect, IRepository, IPlugin, HookContext,
-  NormalizedDoc, DialectConfig, ResolvedLookup, UniqueIndexMatch, DiffOperation, OrmRequest,
-  OrmResponse, OrmOperation
+- Types : FieldType ('string'|'text'|'number'|'boolean'|'date'|'json'|'array'),
+  FieldDef, EmbeddedSchemaDef, RelationType ('one-to-one'|'many-to-one'|'one-to-many'|'many-to-many'),
+  RelationDef, CascadeType ('persist'|'merge'|'remove'|'all'),
+  FetchType ('lazy'|'eager'), OnDeleteAction ('cascade'|'set-null'|'restrict'|'no-action'),
+  IndexType, IndexDef, EntitySchema, FilterOperator, FilterValue, FilterQuery,
+  SortDirection, QueryOptions, PaginatedResult, AggregateStage (et variantes),
+  DialectType, SchemaStrategy ('validate'|'update'|'create'|'create-drop'|'none'),
+  ConnectionConfig, IDialect, IRepository, IPlugin, HookContext, NormalizedDoc,
+  TxHandle (poignée tx manuelle, expérimentale), DialectConfig, ResolvedLookup,
+  UniqueIndexMatch, DiffOperation, OrmRequest, OrmResponse, OrmOperation
 
 ## EXPORTS PAR SOUS-CHEMIN
 - `@mostajs/orm/register` : register(registry) — déclare l'ORM dans le graphe de dépendances
@@ -45,10 +49,25 @@ mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/option
   JdbcNormalizer, parseUri, JDBC_REGISTRY, hasJdbcDriver, getJdbcDriverInfo, BridgeManager,
   saveJarFile, deleteJarFile, listJarFiles, detectDialectFromJar, getJdbcDialectStatus ;
   types BridgeInstance, JarUploadResult, JdbcDriverInfo, JdbcBridgeConfig.
-- `@mostajs/orm/validator` : linter conceptuel de schémas (18 règles R001-R018).
+- `@mostajs/orm/validator` : linter conceptuel de schémas (24 règles : R001-R018
+  + R003B + R004B + R013B + R019/R020/R021 ajoutées en 2.1.0 — voir bloc PIÈGES).
   validateSchemas, DEFAULT_RULES, applyFixes, rollbackFixes, formatText/formatJson/formatMarkdown,
   DEFAULT_SOFT_DELETE_PATTERNS, DEFAULT_AUDIT_BY_FIELDS, DEFAULT_THRESHOLDS ; types Severity,
   Finding, Report, ValidateOptions, Rule, RuleContext, etc. Bin : `mostajs-orm-validator`.
+  Les règles R019-R021 nécessitent `sourceRoot` dans les options pour faire de la
+  détection AST cross-file via ts-morph sur le code consumer. Auto-fix R019/R021
+  livré 2.1.0 (insert import extractRelId + wrap, idempotent, .bak backup).
+  Règles ré-exportées individuellement (pour composition opt-in via Rule[] custom) :
+  R001_EMPTY_RELATIONS, R002_FK_NAMING, R003_SOFT_DELETE,
+  R003B_UNIQUE_WITH_SOFTDELETE_CONFLICT, R004_DUPLICATE_ENTITY,
+  R004B_LEGACY_ENTITY, R005_ANY_TYPED_REPO, R006_JSON_AS_RELATION,
+  R007_REDUNDANT_DERIVED_FIELD, R008_BEST_EFFORT_RESOLVER, R009_MISSING_LOOKUP_INDEX,
+  R010_MISSING_AUDIT_TABLE, R011_LEGACY_DEAD_CODE, R012_DUPLICATE_IMPLEMENTATION,
+  R013_MISSING_CASCADE, R013B_EAGER_WITHOUT_CASCADE,
+  R014_REPO_FACTORY_BOILERPLATE, R015_FLAT_LIB_STRUCTURE,
+  R016_AUDIT_EMAIL_AS_STRING, R017_UNBOUNDED_BLOB, R018_EXTERNAL_SCHEMA_OVERSCOPED,
+  R019_FINDBYID_OBJECT_INPUT, R020_NATURAL_KEY_LOOKUP_OPPORTUNITY,
+  R021_DIRECT_RELATION_COMPARISON.
 
 ## API — SIGNATURES
 - getDialect(config?): Promise<IDialect> — singleton, reconnexion idempotente
@@ -129,11 +148,32 @@ const found = await users.findOne({ email: 'a@b.c' });
 - `getDialect()` est un singleton ; pour plusieurs connexions simultanées utiliser
   `createIsolatedDialect()` (hors singleton, schémas non enregistrés globalement).
 - `schemaStrategy: 'create'` drop puis recrée ; `'create-drop'` drop à l'arrêt. En prod : `'validate'`.
-- API tx manuelle (beginTx/commitTx/rollbackTx) : expérimentale. Sur dialectes SQL poolés,
-  forcer `poolSize: 1` pour la cohérence stricte ; MongoDB : utiliser `$transaction(cb)`.
+- API tx manuelle (beginTx/commitTx/rollbackTx) : expérimentale, type `TxHandle`. Sur dialectes
+  SQL poolés, forcer `poolSize: 1` pour la cohérence stricte ; MongoDB : utiliser `$transaction(cb)`.
 - Ne jamais mettre `cascade: ['remove'|'all']` sur une relation many-to-many (supprimerait l'entité cible).
 - `dropDatabase` est IRRÉVERSIBLE. `findById(objet)` lève `OrmIntrospectionError` si l'objet
   ne correspond ni à `id` ni à un index unique.
+- Multi-dialecte FK : sur SQL, les contraintes `FOREIGN KEY ... ON DELETE ...` sont générées
+  depuis `relations[name].onDelete` à la création de schema ; sur MongoDB, il n'y a pas de
+  FK natives — `findWithRelations` utilise `.populate()` (mongoose ref). L'API JS reste
+  identique ; le dialect adapte. Conséquence : `onDelete: 'cascade'` ne s'applique côté
+  serveur que sur SQL — sur MongoDB il faut implémenter manuellement la cascade (cf. R013).
+- Validator 2.1.0 — nouvelles règles :
+  Cross-file consumer-code (nécessitent `sourceRoot`) :
+  - **R019-FINDBYID-OBJECT-INPUT** *(warning, fixable)* — flag `repo.findById(entity.relation)`
+    où relation est déclarée comme relation. Auto-fix : insert import extractRelId + wrap.
+  - **R020-NATURAL-KEY-LOOKUP-OPPORTUNITY** *(info, non-fixable par design)* — flag
+    `repo.findOne({field:x})` quand `field` (ou composite) est un unique index ;
+    `findOne` reste valide.
+  - **R021-DIRECT-RELATION-COMPARISON** *(warning, fixable)* — flag
+    `entity.relation === value` : sous `fetch:'eager'`, toujours faux. Auto-fix wrap.
+  Schema-only (pas besoin de `sourceRoot`) :
+  - **R003B-UNIQUE-WITH-SOFTDELETE-CONFLICT** *(warning, fixable)* — flag les index
+    unique non-sparse sur schémas avec soft-delete (natif ou pattern manuel) — bloque
+    la réinsertion après soft-delete. Auto-fix : ajoute `sparse: true`.
+  - **R013B-EAGER-WITHOUT-CASCADE** *(warning, fixable)* — flag les relations
+    `fetch: 'eager'` sans `onDelete` — orphelins populés silencieusement. Auto-fix
+    insère un `onDelete` cohérent ('cascade' si required ou one-to-many, sinon 'set-null').
 
 ## RÉFÉRENCES
 - README.md · CHANGELOG.md

@@ -2,6 +2,118 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.1.0] — 2026-05-25
+
+### Added — 5 nouvelles règles validator *(comblement de dette doc/code)*
+
+Le README et `docs/TECHNIQUE-INTROSPECTION-FINDONEBYID.md` annonçaient depuis
+la 2.0.0 plusieurs règles (R019/R020/R021 + R003B/R013B) comme spécifiées.
+Cette version les livre toutes — la dette doc/code est résorbée.
+
+#### Cross-file (consumer-code, nécessitent `sourceRoot`)
+
+- **R019-FINDBYID-OBJECT-INPUT** *(warning, auto-fixable)* — détecte les
+  appels `repo.findById(entity.relation)` où `relation` est déclarée
+  comme relation. Sous `fetch:'eager'`, l'argument est un objet — l'appel
+  est faux en pre-2.0 et ambigu en 2.0+. Détection AST via ts-morph.
+  **Auto-fix** : insert `import { extractRelId } from '@mostajs/orm'` si
+  absent (étend l'import existant si présent) + wrap l'expression.
+  Idempotent (skip si déjà appliqué).
+
+- **R020-NATURAL-KEY-LOOKUP-OPPORTUNITY** *(info, non-fixable par design)* —
+  détecte les `repo.findOne({ field: x })` ou composite dont l'ensemble
+  des keys correspond exactement à un unique index. Suggère que la même
+  écriture est valide en `findById(...)` polymorphique. Non auto-fixable :
+  `findOne` reste lisible et valide.
+
+- **R021-DIRECT-RELATION-COMPARISON** *(warning, auto-fixable)* — détecte
+  les comparaisons `entity.relation === value` (ou `!==`) où `relation`
+  est une relation ORM. Sous `fetch:'eager'`, c'est un objet comparé à
+  une string id — toujours `false` (`===`) ou `true` (`!==`). Détection
+  AST (BinaryExpression) avec opérandes des deux côtés. **Auto-fix**
+  identique à R019.
+
+#### Schema-only (pas besoin de `sourceRoot`)
+
+- **R003B-UNIQUE-WITH-SOFTDELETE-CONFLICT** *(warning, auto-fixable)* —
+  détecte les index uniques non-sparse sur des schémas avec soft-delete
+  (natif `softDelete: true` ou pattern manuel `deleted` + `deletedAt`).
+  Conséquence : la réinsertion d'un row avec mêmes valeurs après
+  soft-delete est refusée par la contrainte UNIQUE. **Auto-fix** : ajoute
+  `sparse: true` à l'index ciblé (partial unique en SQL/Postgres :
+  `WHERE deletedAt IS NULL`).
+
+- **R013B-EAGER-WITHOUT-CASCADE** *(warning, auto-fixable)* — détecte
+  les relations avec `fetch: 'eager'` ET sans `onDelete` explicite.
+  Orphelins populés silencieusement après delete parent. **Auto-fix** :
+  insère un `onDelete` cohérent (`'cascade'` si `required` ou
+  `one-to-many`, sinon `'set-null'`).
+
+#### Extension du fixer pour cross-file consumer-code
+
+Le `applyFixes()` charge désormais aussi les fichiers consumer cités
+dans `location.file` des findings *(en plus des schemas)*. Une nouvelle
+helper `ensureExtractRelIdImport()` gère intelligemment l'insertion ou
+l'extension d'import `@mostajs/orm` :
+
+1. Import nommé déjà présent → no-op
+2. Autre import depuis `@mostajs/orm` → ajoute `extractRelId` à la liste
+3. Aucun import → nouvelle ligne d'import après les imports existants
+
+Idempotence garantie : un re-run du validator après auto-fix ne génère
+plus le finding correspondant.
+
+### Validator totalise désormais 24 règles
+
+R001-R018, plus R003B/R004B/R013B, plus R019/R020/R021. Toutes
+enregistrées dans `DEFAULT_RULES` et exportées individuellement depuis
+`@mostajs/orm/validator` pour composition opt-in.
+
+### Couverture tests
+
+50 tests unitaires dans `test-scripts/validator-rules.test.mjs` (25
+anciens + 25 nouveaux) :
+- R019 : 5 tests (TP + 4 TN)
+- R020 : 5 tests (2 TP + 3 TN)
+- R021 : 6 tests (3 TP + 3 TN)
+- R003B : 4 tests (TP natif/manuel + 2 TN)
+- R013B : 4 tests (TP M2O + 3 TN)
+- Auto-fix R019 : 2 tests (création import + extension import existant)
+- Auto-fix R021 : 1 test (idempotence vérifiée)
+
+Plus 2 tests dans `test-scripts/llms-txt-coverage.test.mjs` (garde-fou
+exhaustivité doc-vs-code à 100%).
+
+### Added — `TxHandle` ré-exporté depuis l'index racine
+
+L'interface `TxHandle` *(retour de `beginTx/commitTx/rollbackTx`)* était
+définie dans `core/types.ts` mais oubliée du barrel `index.ts`, rendant
+l'API tx manuelle non-typable côté consumer. Corrigé.
+
+### Added — `llms.txt`
+
+Fiche AI-friendly à la racine du package, embarquée dans le tarball npm.
+Décrit l'API publique et les patterns d'usage *(findById polymorphique,
+extractRelId, ORMConceptValidator, FK/relations)* pour les assistants LLM
+consommateurs.
+
+### Fixed — README et doc TECHNIQUE-INTROSPECTION
+
+- README §107 : *« explicitly documented + ORMConceptValidator R019/R021 »*
+  était factuel pour la doc mais faux pour le validator. Désormais accurate :
+  les règles sont **implémentées et testées**.
+- `docs/TECHNIQUE-INTROSPECTION-FINDONEBYID.md` Phase 3 §266-270 : checkboxes
+  *« Implémentation R019 / R020 »* cochés.
+
+### Unchanged
+
+Pas de changement runtime ORM (dialects, BaseRepository, findById, schémas).
+La 2.1.0 ne touche que le validator + barrel exports + doc. Pas de
+migration nécessaire pour les consumers, sauf re-installer le package pour
+bénéficier des nouvelles règles validator.
+
+**Author** : Dr Hamid MADANI <drmdh@msn.com>
+
 ## [2.0.0] — 2026-05-13 *(prepared, not yet published)*
 
 **⚠ Breaking change** — comportement par défaut des relations changé.

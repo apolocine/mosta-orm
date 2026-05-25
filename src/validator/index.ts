@@ -45,3 +45,8 @@ export {
   R012_DUPLICATE_IMPLEMENTATION,
   R018_EXTERNAL_SCHEMA_OVERSCOPED,
 } from './rules/r007-r008-r011-r012-r018-stubs.js'
+export { R019_FINDBYID_OBJECT_INPUT } from './rules/r019-findbyid-object-input.js'
+export { R020_NATURAL_KEY_LOOKUP_OPPORTUNITY } from './rules/r020-natural-key-lookup-opportunity.js'
+export { R021_DIRECT_RELATION_COMPARISON } from './rules/r021-direct-relation-comparison.js'
+export { R003B_UNIQUE_WITH_SOFTDELETE_CONFLICT } from './rules/r003b-unique-with-softdelete-conflict.js'
+export { R013B_EAGER_WITHOUT_CASCADE } from './rules/r013b-eager-without-cascade.js'
