@@ -1167,6 +1167,32 @@ export abstract class AbstractSqlDialect implements IDialect {
         this.log('DDL_ALTER_ADD_FK_FAIL', `${schema.collection}.${colName}`, (e as Error).message);
       }
     }
+
+    // System columns ajoutées rétroactivement quand activées :
+    // timestamps (createdAt/updatedAt), softDelete (deletedAt), discriminator.
+    // Voir docs/ANOMALIES-LOT3-2026-05-25.md §9.
+    const systemCols: Array<{ name: string; sqlType: string; when: boolean }> = [
+      { name: 'createdAt',  sqlType: this.fieldToSqlType({ type: 'date' }), when: !!schema.timestamps },
+      { name: 'updatedAt',  sqlType: this.fieldToSqlType({ type: 'date' }), when: !!schema.timestamps },
+      { name: 'deletedAt',  sqlType: this.fieldToSqlType({ type: 'date' }), when: !!schema.softDelete },
+    ];
+    if (schema.discriminator) {
+      systemCols.push({
+        name: schema.discriminator,
+        sqlType: this.fieldToSqlType({ type: 'string' }),
+        when: true,
+      });
+    }
+    for (const col of systemCols) {
+      if (!col.when || has(col.name)) continue;
+      const sql = `ALTER TABLE ${q(schema.collection)} ADD ${q(col.name)} ${col.sqlType}`;
+      try {
+        this.log('DDL_ALTER_ADD_SYSTEM', `${schema.collection}.${col.name}`, sql);
+        await this.executeRun(sql, []);
+      } catch (e) {
+        this.log('DDL_ALTER_ADD_SYSTEM_FAIL', `${schema.collection}.${col.name}`, (e as Error).message);
+      }
+    }
   }
 
   async initSchema(schemas: EntitySchema[]): Promise<void> {
