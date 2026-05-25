@@ -2,6 +2,53 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.1] — 2026-05-25
+
+### Anomalie #6 — `onDelete: 'cascade'` silencieusement ignoré sur SQLite
+
+Découverte au premier smoke du sample 10 contre 2.2.0 : la cascade SQL
+attendue ne se produisait pas. Cause racine : `generateForeignKeys`
+utilisait `ALTER TABLE ADD CONSTRAINT FOREIGN KEY` — syntaxe **non
+supportée par SQLite**, et le `try/catch {}` swallow silencieusement
+toutes les erreurs FK. Résultat : aucune FK n'était jamais créée sur
+SQLite, `PRAGMA foreign_keys = ON` activé pour rien.
+
+#### Fixed
+
+- **SQLite : FK in-line dans `CREATE TABLE`** — nouveau hook
+  `supportsAlterTableAddForeignKey()` (default `true` dans
+  `AbstractSqlDialect`, override `false` dans `SQLiteDialect`).
+  Quand `false` : `generateCreateTable` émet directement
+  `FOREIGN KEY (col) REFERENCES table(id) ON DELETE …` dans la
+  définition de table ; `generateForeignKeys` est skipped (avec log
+  explicite "skipped — dialect emits FK in-line").
+
+- **`generateForeignKeys` : catch non-silencieux** — remplacement
+  des deux `catch {}` par `catch (e) { this.log('FK', `${name} skipped (${e.message})`) }`.
+  Les erreurs ALTER TABLE FK sont désormais visibles dans les logs.
+
+#### Tests
+
+- `test-scripts/sqlite-fk-cascade.test.mjs` — verrouille le comportement
+  cascade sur SQLite avec :
+  - `PRAGMA foreign_key_list("profiles")` retourne 1 FK `ON DELETE CASCADE`
+  - delete User → Profile lié supprimé en cascade SQL native
+- 121 tests existants verts (validator + introspection + 5 fix Lot 3 + 2 llms-coverage)
+- **122/122 verts**
+
+#### Impact API
+
+Non-breaking. Les schémas avec `relations[].onDelete` correctement
+documentés gagnent automatiquement leurs FK cascade SQL (correction
+silencieuse d'un bug). Aucune signature publique modifiée. La signature
+interne `generateCreateTable(schema)` devient
+`generateCreateTable(schema, allSchemas?)` (override-only, pas un
+breaking change consumer).
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.2.0] — 2026-05-25
 
 ### Anomalies traitées — chantier Lot 3 samples

@@ -1,8 +1,8 @@
 # @mostajs/orm — fiche LLM
 > ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
 
-- Version: 2.2.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
-- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies Lot 3 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md)
+- Version: 2.2.1 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies Lot 3 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md ; #6 SQLite FK in-line en 2.2.1)
 
 ## RÔLE
 Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
