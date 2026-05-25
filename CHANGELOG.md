@@ -2,6 +2,44 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.4] — 2026-05-25
+
+### Anomalie #9 — `addMissingColumns` ignorait les colonnes système
+
+Découverte au smoke du sample 12 (`migration-diff`) contre 2.2.3 :
+`strategy: 'update'` ajoutait bien la nouvelle colonne `phone` mais
+**oubliait** `deletedAt` (quand `softDelete: true` activé rétroactivement).
+Premier `findOne` crashait avec "no such column: deletedAt".
+
+#### Fixed
+
+`addMissingColumns` étendu pour traiter les 4 colonnes système :
+
+- `createdAt` / `updatedAt` quand `schema.timestamps: true` activé après-coup
+- `deletedAt` quand `schema.softDelete: true` activé après-coup
+- Colonne discriminator quand `schema.discriminator` ajouté
+
+Chaque colonne nullable, log `DDL_ALTER_ADD_SYSTEM` ou
+`DDL_ALTER_ADD_SYSTEM_FAIL` (visibilité).
+
+#### Tests
+
+- `test-scripts/system-columns-migration.test.mjs` : v1 (basique) →
+  v2 (timestamps + softDelete) via `strategy: 'update'`. PRAGMA
+  `table_info` confirme l'ajout des 3 colonnes. Lookup pré-existant
+  toujours visible (deletedAt IS NULL). Soft-delete + `includeDeleted`
+  fonctionnels sur la row pré-existante.
+- 124 tests existants verts → 125/125
+
+#### Impact API
+
+Non-breaking. Les schémas qui activaient `softDelete`/`timestamps` après
+release initiale gagnent automatiquement le bon comportement migration.
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.2.3] — 2026-05-25
 
 ### Anomalie #8 — `populateRelations` ignorait `joinColumn`
