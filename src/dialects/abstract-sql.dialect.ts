@@ -221,6 +221,15 @@ export abstract class AbstractSqlDialect implements IDialect {
   /** Whether this dialect supports RETURNING clause on INSERT */
   protected supportsReturning(): boolean { return false; }
 
+  /**
+   * Certains dialects (SQLite) ne supportent pas
+   * `ALTER TABLE … ADD CONSTRAINT FOREIGN KEY` — les FK doivent être
+   * déclarées dans le `CREATE TABLE` initial. Override à `false` dans
+   * ces dialects pour basculer en mode FK in-line.
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §6.
+   */
+  protected supportsAlterTableAddForeignKey(): boolean { return true; }
+
   /** Serialize a JS boolean to a DB value (default: 1/0) */
   protected serializeBoolean(v: boolean): unknown { return v ? 1 : 0; }
 
@@ -867,7 +876,7 @@ export abstract class AbstractSqlDialect implements IDialect {
   // DDL Generation — EntitySchema → CREATE TABLE
   // ============================================================
 
-  protected generateCreateTable(schema: EntitySchema): string {
+  protected generateCreateTable(schema: EntitySchema, allSchemas?: EntitySchema[]): string {
     const q = (name: string) => this.quoteIdentifier(name);
     const cols: string[] = [`  ${q('id')} ${this.getIdColumnType()} PRIMARY KEY`];
 
@@ -931,6 +940,25 @@ export abstract class AbstractSqlDialect implements IDialect {
     // Soft-delete column
     if (schema.softDelete) {
       cols.push(`  ${q('deletedAt')} ${this.fieldToSqlType({ type: 'date' })}`);
+    }
+
+    // FK in-line pour dialects sans ALTER TABLE ADD CONSTRAINT FK (SQLite).
+    // Voir docs/ANOMALIES-LOT3-2026-05-25.md §6.
+    // Note : le `target` peut référencer un schema non encore créé au moment
+    // de ce CREATE TABLE — SQLite résout les FK au INSERT, pas au CREATE.
+    if (!this.supportsAlterTableAddForeignKey()) {
+      const targetCollections = new Map<string, string>();
+      for (const s of allSchemas || []) {
+        targetCollections.set(s.name, s.collection);
+      }
+      for (const [name, rel] of Object.entries(schema.relations || {})) {
+        if (rel.type === 'many-to-many' || rel.type === 'one-to-many') continue;
+        const colName = rel.joinColumn || name;
+        const targetCollection = targetCollections.get(rel.target) || rel.target.toLowerCase();
+        const onDel = rel.onDelete || (rel.nullable !== false ? 'set-null' : 'restrict');
+        const onDelSql = onDel.toUpperCase().replace('-', ' ');
+        cols.push(`  FOREIGN KEY (${q(colName)}) REFERENCES ${q(targetCollection)}(${q('id')}) ON DELETE ${onDelSql}`);
+      }
     }
 
     return `${this.getCreateTablePrefix(schema.collection)} (\n${cols.join(',\n')}\n)`;
@@ -1167,7 +1195,7 @@ export abstract class AbstractSqlDialect implements IDialect {
         ? await this.tableExists(schema.collection)
         : false;
 
-      const createSql = this.generateCreateTable(schema);
+      const createSql = this.generateCreateTable(schema, schemas);
       this.log('DDL', schema.collection, createSql);
       await this.executeRun(createSql, []);
 
@@ -1212,8 +1240,20 @@ export abstract class AbstractSqlDialect implements IDialect {
     await this.generateForeignKeys(schemas);
   }
 
-  /** Generate FK constraints for M2O/O2O relations and junction tables */
+  /**
+   * Generate FK constraints for M2O/O2O relations and junction tables.
+   *
+   * Sur les dialects sans support ALTER TABLE ADD CONSTRAINT FK (SQLite),
+   * les FK sont déjà déclarées in-line dans `generateCreateTable` — on skip
+   * cette phase pour éviter une avalanche d'erreurs swallowed.
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §6.
+   */
   protected async generateForeignKeys(schemas: EntitySchema[]): Promise<void> {
+    if (!this.supportsAlterTableAddForeignKey()) {
+      this.log('FK', 'skipped — dialect emits FK in-line in CREATE TABLE');
+      return;
+    }
+
     const q = (n: string) => this.quoteIdentifier(n);
 
     for (const schema of schemas) {
@@ -1231,8 +1271,9 @@ export abstract class AbstractSqlDialect implements IDialect {
           try {
             await this.executeRun(sql, []);
             this.log('FK', fkName, sql);
-          } catch {
-            // FK may already exist (strategy=update) or dialect may not support it
+          } catch (e) {
+            // FK may already exist (strategy=update) ; on log la cause pour visibilité.
+            this.log('FK', `${fkName} skipped (${(e as Error).message})`);
           }
         }
 
@@ -1253,8 +1294,8 @@ export abstract class AbstractSqlDialect implements IDialect {
               `FOREIGN KEY (${q(targetKey)}) REFERENCES ${q(targetSchema.collection)}(${q('id')}) ON DELETE CASCADE`, []
             );
             this.log('FK_JUNCTION', rel.through, `${fkSource}, ${fkTarget}`);
-          } catch {
-            // FK may already exist
+          } catch (e) {
+            this.log('FK_JUNCTION', `${rel.through} skipped (${(e as Error).message})`);
           }
         }
       }
