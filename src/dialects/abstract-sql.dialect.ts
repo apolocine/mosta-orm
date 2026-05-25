@@ -1776,10 +1776,19 @@ export abstract class AbstractSqlDialect implements IDialect {
         );
         result[relName] = children;
       } else {
-        const refId = result[relName];
+        // M-1 / 1-1 : lire la FK depuis la colonne joinColumn (par défaut relName).
+        // Le résultat populé est déposé sur `relName` (peut différer de joinColumn).
+        // Voir docs/ANOMALIES-LOT3-2026-05-25.md §8.
+        const fkColumn = relDef.joinColumn || relName;
+        const refId = result[fkColumn];
         if (refId) {
           const related = await this.findById<Record<string, unknown>>(targetSchema, String(refId), selectOpts);
-          result[relName] = related ?? refId;
+          if (related) {
+            result[relName] = related;
+          } else if (fkColumn === relName) {
+            // Pas de target trouvé ET pas de joinColumn distinct → on garde la string id
+            result[relName] = refId;
+          }
         }
       }
     }
