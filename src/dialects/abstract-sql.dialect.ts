@@ -586,9 +586,19 @@ export abstract class AbstractSqlDialect implements IDialect {
   /**
    * Inject soft-delete filter: WHERE deletedAt IS NULL
    * Automatically applied to find/count/distinct/search queries.
+   *
+   * Bypass explicite : `options.includeDeleted === true` retourne le filter
+   * inchangé (les lignes soft-deletées sont alors visibles).
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §1.
    */
-  protected applySoftDeleteFilter(filter: DALFilter, schema: EntitySchema): DALFilter {
-    if (!schema.softDelete || 'deletedAt' in filter) return filter;
+  protected applySoftDeleteFilter(
+    filter: DALFilter,
+    schema: EntitySchema,
+    options?: { includeDeleted?: boolean },
+  ): DALFilter {
+    if (!schema.softDelete) return filter;
+    if (options?.includeDeleted === true) return filter;
+    if ('deletedAt' in filter) return filter;
     return { ...filter, deletedAt: { $eq: null } };
   }
 
@@ -861,9 +871,26 @@ export abstract class AbstractSqlDialect implements IDialect {
     const q = (name: string) => this.quoteIdentifier(name);
     const cols: string[] = [`  ${q('id')} ${this.getIdColumnType()} PRIMARY KEY`];
 
+    // Pré-calcul : noms de colonnes FK que les relations vont générer.
+    // Évite la collision "duplicate column name" quand un consumer
+    // déclare la colonne FK à la fois dans `fields` et via une relation
+    // avec `joinColumn` (cf. docs/ANOMALIES-LOT3-2026-05-25.md §2).
+    const fkColumnNames = new Set<string>();
+    for (const [relName, rel] of Object.entries(schema.relations || {})) {
+      if (rel.type === 'many-to-many' || rel.type === 'one-to-many') continue;
+      fkColumnNames.add(rel.joinColumn || relName);
+    }
+
     for (const [name, field] of Object.entries(schema.fields || {})) {
       // Skip 'id' — already added as PK above
       if (name === 'id') continue;
+      // Skip field si une relation génère déjà la colonne homonyme
+      // (la relation gagne — elle apporte le type id correct, NOT NULL/UNIQUE
+      // selon required/one-to-one, FK natives).
+      if (fkColumnNames.has(name)) {
+        this.log('SCHEMA', `${schema.name}.${name} déjà couvert par une relation joinColumn — field redondant ignoré`);
+        continue;
+      }
       let colDef = `  ${q(name)} ${this.fieldToSqlType(field)}`;
       // DEFAULT must come before NOT NULL for HSQLDB compatibility
       // 'now' and '__MOSTA_NOW__' (the adapter's sentinel) both mean "current time":
@@ -1240,7 +1267,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   async find<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T[]> {
     this.resetParams();
-    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema, options);
     const where = this.translateFilter(effectiveFilter, schema);
     const cols = this.buildSelectColumns(schema, options);
     const orderBy = this.buildOrderBy(options);
@@ -1265,7 +1292,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     const table = this.quoteIdentifier(schema.collection);
 
     // Build WHERE with discriminator + soft-delete
-    const extraFilter = this.applySoftDeleteFilter(this.applyDiscriminator({ id }, schema), schema);
+    const extraFilter = this.applySoftDeleteFilter(this.applyDiscriminator({ id }, schema), schema, options);
     const where = this.translateFilter(extraFilter, schema);
 
     const sql = `SELECT ${cols} FROM ${table} WHERE ${where.sql}`;
@@ -1501,9 +1528,9 @@ export abstract class AbstractSqlDialect implements IDialect {
   // IDialect Implementation — Queries
   // ============================================================
 
-  async count(schema: EntitySchema, filter: DALFilter): Promise<number> {
+  async count(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<number> {
     this.resetParams();
-    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema, options);
     const where = this.translateFilter(effectiveFilter, schema);
     const table = this.quoteIdentifier(schema.collection);
 
@@ -1514,9 +1541,9 @@ export abstract class AbstractSqlDialect implements IDialect {
     return rows.length > 0 ? Number(rows[0].cnt) : 0;
   }
 
-  async distinct(schema: EntitySchema, field: string, filter: DALFilter): Promise<unknown[]> {
+  async distinct(schema: EntitySchema, field: string, filter: DALFilter, options?: QueryOptions): Promise<unknown[]> {
     this.resetParams();
-    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+    const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema, options);
     const where = this.translateFilter(effectiveFilter, schema);
     const table = this.quoteIdentifier(schema.collection);
 
@@ -1532,7 +1559,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     });
   }
 
-  async aggregate<T>(schema: EntitySchema, stages: AggregateStage[]): Promise<T[]> {
+  async aggregate<T>(schema: EntitySchema, stages: AggregateStage[], options?: QueryOptions): Promise<T[]> {
     this.resetParams();
     let whereClause = '1=1';
     let whereParams: unknown[] = [];
@@ -1543,7 +1570,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     for (const stage of stages) {
       if ('$match' in stage) {
-        const effectiveMatch = this.applySoftDeleteFilter(this.applyDiscriminator(stage.$match, schema), schema);
+        const effectiveMatch = this.applySoftDeleteFilter(this.applyDiscriminator(stage.$match, schema), schema, options);
         const w = this.translateFilter(effectiveMatch, schema);
         whereClause = w.sql;
         whereParams = w.params;
@@ -1925,8 +1952,8 @@ export abstract class AbstractSqlDialect implements IDialect {
     const limitOffset = this.buildLimitOffset(options);
     const table = this.quoteIdentifier(schema.collection);
 
-    // Apply discriminator + soft-delete
-    const extraFilter = this.applySoftDeleteFilter(this.applyDiscriminator({}, schema), schema);
+    // Apply discriminator + soft-delete (respecte options.includeDeleted)
+    const extraFilter = this.applySoftDeleteFilter(this.applyDiscriminator({}, schema), schema, options);
     const extra = this.translateFilter(extraFilter, schema);
     const extraWhere = extra.sql !== '1=1' ? ` AND ${extra.sql}` : '';
     params.push(...extra.params);

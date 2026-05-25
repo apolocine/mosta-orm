@@ -60,6 +60,22 @@ export class MySQLDialect extends AbstractSqlDialect {
   protected supportsIfNotExists(): boolean { return true; }
   protected supportsReturning(): boolean { return false; }
 
+  /**
+   * MySQL/MariaDB : `SET SESSION TRANSACTION ISOLATION LEVEL` doit précéder
+   * `START TRANSACTION` (ou `BEGIN`). La syntaxe ANSI par défaut
+   * `BEGIN; SET TRANSACTION ISOLATION LEVEL X` produit un ordre invalide
+   * (l'isolation set après BEGIN affecte la transaction suivante, pas
+   * la transaction en cours).
+   *
+   * Les 4 niveaux ANSI sont supportés nativement par MySQL/MariaDB.
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
+   * Audit live amia recommandé pour confirmation.
+   */
+  protected beginSql(opts?: { isolation?: string }): string | null {
+    if (!opts?.isolation) return 'START TRANSACTION';
+    return `SET SESSION TRANSACTION ISOLATION LEVEL ${opts.isolation}; START TRANSACTION`;
+  }
+
   // MySQL 5.x doesn't support CREATE INDEX IF NOT EXISTS (MySQL 8+ does)
   protected getCreateIndexPrefix(indexName: string, unique: boolean): string {
     const u = unique ? 'UNIQUE ' : '';

@@ -63,10 +63,35 @@ class DB2Dialect extends AbstractSqlDialect {
    * SQLSTATE 42704 (object does not exist) so calling drop on a missing
    * table is a no-op like other dialects.
    */
-  /** DB2 uses implicit transactions ; standalone BEGIN is invalid. */
+  /**
+   * DB2 a des transactions implicites — standalone BEGIN invalide.
+   * DB2 utilise son propre vocabulaire d'isolation (UR/CS/RS/RR), pas ANSI.
+   * Mapping ANSI 4-niveaux → DB2 :
+   *   READ UNCOMMITTED → UR (Uncommitted Read)
+   *   READ COMMITTED   → CS (Cursor Stability) — défaut DB2
+   *   REPEATABLE READ  → RS (Read Stability)
+   *   SERIALIZABLE     → RR (Repeatable Read = serializable en sémantique DB2)
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
+   */
   protected beginSql(opts?: { isolation?: string }): string | null {
-    if (opts?.isolation) return `SET CURRENT ISOLATION = ${opts.isolation}`;
-    return null;
+    if (!opts?.isolation) return null;
+    let level: string;
+    switch (opts.isolation) {
+      case 'READ UNCOMMITTED': level = 'UR'; break;
+      case 'READ COMMITTED':   level = 'CS'; break;
+      case 'REPEATABLE READ':  level = 'RS'; break;
+      case 'SERIALIZABLE':     level = 'RR'; break;
+      default:
+        // Si l'appelant passe déjà un code DB2 (UR/CS/RS/RR), le laisser ;
+        // sinon log + fallback CS (défaut).
+        if (['UR', 'CS', 'RS', 'RR'].includes(opts.isolation)) {
+          level = opts.isolation;
+        } else {
+          this.log('TX', `isolation level '${opts.isolation}' non reconnu pour DB2 — fallback CS`);
+          level = 'CS';
+        }
+    }
+    return `SET CURRENT ISOLATION = ${level}`;
   }
 
   async dropTable(tableName: string): Promise<void> {

@@ -178,6 +178,14 @@ export interface QueryOptions {
   select?: string[];
   /** Fields to exclude from result */
   exclude?: string[];
+  /**
+   * Soft-delete : si `true`, les lignes avec `deletedAt != null` sont
+   * incluses dans le résultat. Si `false` ou absent, le filtre automatique
+   * `deletedAt IS NULL` (SQL) / `deletedAt: null` (Mongo) reste appliqué.
+   * Sans effet sur les schémas sans `softDelete: true`.
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §1.
+   */
+  includeDeleted?: boolean;
 }
 
 export interface PaginatedResult<T> {
@@ -388,17 +396,20 @@ export interface IDialect {
   count(
     schema: EntitySchema,
     filter: FilterQuery,
+    options?: QueryOptions,
   ): Promise<number>;
 
   distinct(
     schema: EntitySchema,
     field: string,
     filter: FilterQuery,
+    options?: QueryOptions,
   ): Promise<unknown[]>;
 
   aggregate<T = Record<string, unknown>>(
     schema: EntitySchema,
     stages: AggregateStage[],
+    options?: QueryOptions,
   ): Promise<T[]>;
 
   // --- Relations (equivalent populate / JOIN) ---
@@ -544,9 +555,9 @@ export interface IRepository<T> {
   updateMany(filter: FilterQuery, data: Partial<T>): Promise<number>;
   delete(id: string): Promise<boolean>;
   deleteMany(filter: FilterQuery): Promise<number>;
-  count(filter?: FilterQuery): Promise<number>;
+  count(filter?: FilterQuery, options?: QueryOptions): Promise<number>;
   search(query: string, options?: QueryOptions): Promise<T[]>;
-  distinct(field: string, filter?: FilterQuery): Promise<unknown[]>;
+  distinct(field: string, filter?: FilterQuery, options?: QueryOptions): Promise<unknown[]>;
   aggregate<R = Record<string, unknown>>(stages: AggregateStage[]): Promise<R[]>;
   upsert(filter: FilterQuery, data: Partial<T>): Promise<T>;
   increment(id: string, field: string, amount: number): Promise<T | null>;
