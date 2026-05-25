@@ -64,6 +64,17 @@ export async function applyFixes(report: Report, opts: FixOptions): Promise<FixR
     project.addSourceFileAtPathIfExists(f)
   }
 
+  // 2bis. Charger aussi les fichiers consumer cités explicitement par les
+  // findings cross-file (R019/R021). Évite de re-scanner tout l'arbre.
+  for (const f of report.findings) {
+    if (!f.fixable) continue
+    if (!f.location.file) continue
+    const abs = resolve(opts.sourceRoot, f.location.file)
+    if (!project.getSourceFile(abs)) {
+      project.addSourceFileAtPathIfExists(abs)
+    }
+  }
+
   const results: FixResult[] = []
 
   // 3. Group les findings par fichier + règle
@@ -166,11 +177,211 @@ async function tryApplyFix(
   }
   if (ruleId.startsWith('R001')) return fixR001_EmptyRelations(sf, finding)
   if (ruleId.startsWith('R002')) return fixR002_FkNaming(sf, finding)
+  if (ruleId === 'R003B-UNIQUE-WITH-SOFTDELETE-CONFLICT') return fixR003B_UniqueWithSoftDelete(sf, finding)
   if (ruleId.startsWith('R003')) return fixR003_SoftDeleteNative(sf, finding)
+  if (ruleId === 'R013B-EAGER-WITHOUT-CASCADE') return fixR013B_EagerWithoutCascade(sf, finding)
   if (ruleId.startsWith('R013')) return fixR013_MissingCascade(sf, finding)
   if (ruleId.startsWith('R009')) return fixR009_MissingIndex(sf, finding)
   if (ruleId.startsWith('R016')) return fixR016_AuditEmailAsString(sf, finding)
+  if (ruleId === 'R019-FINDBYID-OBJECT-INPUT') return fixR019_FindByIdObjectInput(sf, finding)
+  if (ruleId === 'R021-DIRECT-RELATION-COMPARISON') return fixR021_DirectRelationComparison(sf, finding)
   return { ok: false, reason: `Auto-fix de ${ruleId} non implémenté` }
+}
+
+// ─── R003B — ajouter `sparse: true` à l'index unique ──────────────
+
+function fixR003B_UniqueWithSoftDelete(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const ctx = parseFindingContext(finding)
+  if (!ctx?.schemaName || !Array.isArray(ctx.indexFields)) {
+    return { ok: false, reason: 'contextDataJson invalide' }
+  }
+  const schemaName = ctx.schemaName as string
+  const indexFields = (ctx.indexFields as string[]).slice().sort().join('|')
+
+  const schemaObj = findSchemaObjectLiteral(sf, schemaName)
+  if (!schemaObj) return { ok: false, reason: `schema '${schemaName}' introuvable` }
+
+  const indexesProp = schemaObj.getProperty('indexes') as PropertyAssignment | undefined
+  const indexesInit = indexesProp?.getInitializer()
+  if (!indexesInit || indexesInit.getKindName() !== 'ArrayLiteralExpression') {
+    return { ok: false, reason: 'indexes: [...] introuvable' }
+  }
+  const arr = indexesInit as unknown as { getElements: () => ObjectLiteralExpression[] }
+  const elements = arr.getElements()
+
+  for (const el of elements) {
+    if (el.getKindName() !== 'ObjectLiteralExpression') continue
+    const obj = el as ObjectLiteralExpression
+    const fieldsProp = obj.getProperty('fields') as PropertyAssignment | undefined
+    const uniqueProp = obj.getProperty('unique') as PropertyAssignment | undefined
+    if (!fieldsProp || !uniqueProp) continue
+    if (uniqueProp.getInitializer()?.getText() !== 'true') continue
+
+    const fieldsInit = fieldsProp.getInitializer()
+    if (!fieldsInit || fieldsInit.getKindName() !== 'ObjectLiteralExpression') continue
+    const fieldsObj = fieldsInit as ObjectLiteralExpression
+    const declaredFields = fieldsObj.getProperties()
+      .filter(p => p.getKindName() === 'PropertyAssignment')
+      .map(p => {
+        const pa = p as PropertyAssignment
+        const nn = pa.getNameNode()
+        return nn.getKindName() === 'Identifier' ? nn.getText() : nn.getText().replace(/['"]/g, '')
+      })
+      .slice()
+      .sort()
+      .join('|')
+
+    if (declaredFields !== indexFields) continue
+    // Index trouvé. Idempotent : sparse déjà true → no-op.
+    const sparseProp = obj.getProperty('sparse') as PropertyAssignment | undefined
+    if (sparseProp) {
+      if (sparseProp.getInitializer()?.getText() === 'true') return { ok: true }
+      sparseProp.setInitializer('true')
+      return { ok: true }
+    }
+    obj.addPropertyAssignment({ name: 'sparse', initializer: 'true' })
+    return { ok: true }
+  }
+
+  return { ok: false, reason: `index unique sur (${(ctx.indexFields as string[]).join(', ')}) introuvable` }
+}
+
+// ─── R013B — ajouter `onDelete` à la relation eager ───────────────
+
+function fixR013B_EagerWithoutCascade(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const ctx = parseFindingContext(finding)
+  if (!ctx?.schemaName || !ctx?.relationName || !ctx?.suggestedOnDelete) {
+    return { ok: false, reason: 'contextDataJson invalide' }
+  }
+
+  const schemaObj = findSchemaObjectLiteral(sf, ctx.schemaName as string)
+  if (!schemaObj) return { ok: false, reason: `schema '${ctx.schemaName}' introuvable` }
+
+  const relationsProp = schemaObj.getProperty('relations') as PropertyAssignment | undefined
+  const relationsInit = relationsProp?.getInitializer()
+  if (!relationsInit || relationsInit.getKindName() !== 'ObjectLiteralExpression') {
+    return { ok: false, reason: 'relations: {...} introuvable' }
+  }
+  const relations = relationsInit as ObjectLiteralExpression
+  const relProp = relations.getProperty(ctx.relationName as string) as PropertyAssignment | undefined
+  if (!relProp) return { ok: false, reason: `relation '${ctx.relationName}' introuvable` }
+  const relDef = relProp.getInitializer()
+  if (!relDef || relDef.getKindName() !== 'ObjectLiteralExpression') {
+    return { ok: false, reason: 'relation def n\'est pas un object literal' }
+  }
+  const relObj = relDef as ObjectLiteralExpression
+
+  const existing = relObj.getProperty('onDelete') as PropertyAssignment | undefined
+  if (existing) return { ok: true }   // idempotent
+  relObj.addPropertyAssignment({
+    name: 'onDelete',
+    initializer: `'${ctx.suggestedOnDelete}'`,
+  })
+  return { ok: true }
+}
+
+// ─── R019 / R021 — cross-file consumer code ───────────────────────
+
+function fixR019_FindByIdObjectInput(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const ctx = parseFindingContext(finding)
+  if (!ctx?.originalCall || !ctx?.suggestedReplacement) {
+    return { ok: false, reason: 'contextDataJson invalide (originalCall/suggestedReplacement absents)' }
+  }
+  return applyTextReplacement(sf, ctx.originalCall as string, ctx.suggestedReplacement as string)
+}
+
+function fixR021_DirectRelationComparison(
+  sf: SourceFile, finding: Finding,
+): { ok: boolean; reason?: string } {
+  const ctx = parseFindingContext(finding)
+  if (!ctx?.originalExpression || !ctx?.suggestedExpression) {
+    return { ok: false, reason: 'contextDataJson invalide (originalExpression/suggestedExpression absents)' }
+  }
+  return applyTextReplacement(sf, ctx.originalExpression as string, ctx.suggestedExpression as string)
+}
+
+/**
+ * Remplace la première occurrence de `oldText` par `newText` dans `sf`, et
+ * s'assure que `extractRelId` est importé depuis `@mostajs/orm`.
+ *
+ * Idempotent :
+ *   - si `oldText` n'existe plus mais `newText` est présent → ok (déjà fait)
+ *   - si l'import existe déjà → no-op pour l'import
+ */
+function applyTextReplacement(
+  sf: SourceFile, oldText: string, newText: string,
+): { ok: boolean; reason?: string } {
+  const fullText = sf.getFullText()
+
+  // Idempotence : si déjà appliqué (newText présent et oldText absent OU
+  // newText présent à la place attendue), on s'assure juste de l'import.
+  if (!fullText.includes(oldText) && fullText.includes(newText)) {
+    return ensureExtractRelIdImport(sf)
+  }
+
+  const idx = fullText.indexOf(oldText)
+  if (idx < 0) {
+    return { ok: false, reason: `expression originale introuvable dans le fichier : ${oldText.slice(0, 60)}…` }
+  }
+  sf.replaceText([idx, idx + oldText.length], newText)
+
+  return ensureExtractRelIdImport(sf)
+}
+
+/**
+ * Garantit qu'`extractRelId` est importable depuis `@mostajs/orm`. Trois cas :
+ *   1. Import nommé déjà présent → no-op
+ *   2. Autre import depuis '@mostajs/orm' présent (ex: `{ BaseRepository }`)
+ *      → on ajoute `extractRelId` à la liste nommée
+ *   3. Aucun import depuis '@mostajs/orm' → on insère une nouvelle ligne
+ *      d'import en tête de fichier, après les éventuels imports existants
+ *      (pour ne pas casser la convention 'imports en haut').
+ */
+function ensureExtractRelIdImport(sf: SourceFile): { ok: boolean; reason?: string } {
+  const importDecls = sf.getImportDeclarations()
+  const targetMod = '@mostajs/orm'
+
+  for (const imp of importDecls) {
+    if (imp.getModuleSpecifierValue() !== targetMod) continue
+    const namedImports = imp.getNamedImports()
+    if (namedImports.some(n => n.getName() === 'extractRelId')) {
+      return { ok: true }   // cas 1
+    }
+    imp.addNamedImport('extractRelId')   // cas 2
+    return { ok: true }
+  }
+
+  // cas 3 — pas d'import depuis @mostajs/orm
+  const allImports = sf.getImportDeclarations()
+  if (allImports.length > 0) {
+    const last = allImports[allImports.length - 1]
+    sf.insertImportDeclaration(last.getChildIndex() + 1, {
+      namedImports: ['extractRelId'],
+      moduleSpecifier: targetMod,
+    })
+  } else {
+    sf.insertImportDeclaration(0, {
+      namedImports: ['extractRelId'],
+      moduleSpecifier: targetMod,
+    })
+  }
+  return { ok: true }
+}
+
+/** Helper : parse contextDataJson en objet. Retourne null si invalide. */
+function parseFindingContext(finding: Finding): Record<string, unknown> | null {
+  if (!finding.contextDataJson) return null
+  try {
+    return JSON.parse(finding.contextDataJson) as Record<string, unknown>
+  } catch {
+    return null
+  }
 }
 
 // ─── R003 — migrer (deleted/deletedAt) manuel vers softDelete natif ──

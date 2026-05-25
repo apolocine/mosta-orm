@@ -104,7 +104,7 @@ The default eager/lazy choice forces every consumer to be defensive everywhere.
 | **TypeORM ≥ 0.3** | LAZY *(opt-in `relations: ['rel']`)* | `findOneBy({ id })` only | ❌ none | No |
 | **MikroORM** | LAZY *(opt-in `populate`)* | `findOne({ id })` only | `Reference<T>` proxy *(use `.id` accessor)* | Yes — Reference helper documented |
 | **SQLAlchemy** | LAZY *(opt-in `joinedload`)* | `session.get(Cls, ident)` accepts tuple for composite | ❌ none in Python (no `==` overloading either) | Yes — community workarounds |
-| **`@mostajs/orm@2.0`** | **LAZY** *(opt-in `fetch:'eager'`)* | **`findById()` polymorphe** *(string, `{id}`, natural key single or composite)* | **`extractRelId(value)`** helper | **Yes — explicitly documented + ORMConceptValidator R019/R021** |
+| **`@mostajs/orm@2.1`** | **LAZY** *(opt-in `fetch:'eager'`)* | **`findById()` polymorphe** *(string, `{id}`, natural key single or composite)* | **`extractRelId(value)`** helper | **Yes — explicitly documented + ORMConceptValidator R019/R020/R021 (livrés en 2.1.0)** |
 
 ### The `@mostajs/orm@2.0` 3-layer solution
 
@@ -168,8 +168,8 @@ if (extractRelId(reg.project) === project.id) {
 | Opt-in eager via schema flag | ✅ `fetch:'eager'` | TypeORM via `eager: true`. Others : per-query only. |
 | **`findById` accepts string OR `{id}` OR natural key OR composite** | ✅ | **None** *(Prisma findUnique is closest but doesn't accept `{id}` object pass-through)* |
 | **Public `extractRelId` helper for `===` comparisons** | ✅ | **None** *(MikroORM Reference is closest but requires API discipline)* |
-| Validator rule auto-detects the trap *(R021-DIRECT-RELATION-COMPARISON)* | ✅ via [ORMConceptValidator](#-ormconceptvalidator-v114) | None |
-| Auto-fix the trap *(injects `extractRelId` import + wraps comparison)* | ✅ | None |
+| Validator rule auto-detects the trap *(R021-DIRECT-RELATION-COMPARISON, livré 2.1.0)* | ✅ via [ORMConceptValidator](#-ormconceptvalidator-v114) | None |
+| Auto-fix the trap *(injects `extractRelId` import + wraps comparison)* | ⚠ V2 — diff suggéré fourni, application manuelle ou via plugin IDE | None |
 
 ### Benchmark — same code in 3 ORMs *(eager opt-in scenario)*
 

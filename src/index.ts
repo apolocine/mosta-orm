@@ -36,6 +36,7 @@ export type {
   IPlugin,
   HookContext,
   NormalizedDoc,
+  TxHandle,
 } from './core/types.js';
 
 // ============================================================

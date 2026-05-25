@@ -32,6 +32,11 @@ import {
   R012_DUPLICATE_IMPLEMENTATION,
   R018_EXTERNAL_SCHEMA_OVERSCOPED,
 } from './rules/r007-r008-r011-r012-r018-stubs.js'
+import { R019_FINDBYID_OBJECT_INPUT } from './rules/r019-findbyid-object-input.js'
+import { R020_NATURAL_KEY_LOOKUP_OPPORTUNITY } from './rules/r020-natural-key-lookup-opportunity.js'
+import { R021_DIRECT_RELATION_COMPARISON } from './rules/r021-direct-relation-comparison.js'
+import { R003B_UNIQUE_WITH_SOFTDELETE_CONFLICT } from './rules/r003b-unique-with-softdelete-conflict.js'
+import { R013B_EAGER_WITHOUT_CASCADE } from './rules/r013b-eager-without-cascade.js'
 
 const DEFAULT_RULES: Rule[] = [
   R001_EMPTY_RELATIONS,
@@ -53,6 +58,11 @@ const DEFAULT_RULES: Rule[] = [
   R016_AUDIT_EMAIL_AS_STRING,
   R017_UNBOUNDED_BLOB,
   R018_EXTERNAL_SCHEMA_OVERSCOPED,
+  R019_FINDBYID_OBJECT_INPUT,
+  R020_NATURAL_KEY_LOOKUP_OPPORTUNITY,
+  R021_DIRECT_RELATION_COMPARISON,
+  R003B_UNIQUE_WITH_SOFTDELETE_CONFLICT,
+  R013B_EAGER_WITHOUT_CASCADE,
 ]
 
 /** Point d'entrée principal. */
