@@ -143,15 +143,24 @@ export function getConfigFromEnv(): ConnectionConfig {
 export async function getDialect(config?: ConnectionConfig): Promise<IDialect> {
   if (currentDialect) {
     // Lazy refresh : si registerSchemas a ajouté des schemas DEPUIS le dernier
-    // initSchema, ré-initialiser uniquement les nouveaux. Cas typique :
-    // @mostajs/auth a créé le singleton AVANT que registerSchemas applicatif
-    // ne soit appelé — sans ce refresh, mongoose.models reste vide et
-    // tout populate cross-schema crashe MissingSchemaError.
-    // Voir docs/ANOMALIES-LOT3-2026-05-25.md §13.
-    const newSchemas = getAllSchemas().filter(s => !initializedSchemaNames.has(s.name));
-    if (newSchemas.length > 0) {
-      await currentDialect.initSchema(newSchemas);
-      for (const s of newSchemas) initializedSchemaNames.add(s.name);
+    // initSchema, ré-initialiser. Cas typique : @mostajs/auth a créé le
+    // singleton AVANT que registerSchemas applicatif ne soit appelé — sans
+    // ce refresh, mongoose.models reste vide ET this.schemas reste vide,
+    // ce qui casse populateRelations cross-schema.
+    //
+    // IMPORTANT : on passe TOUS les schemas du registry à initSchema, pas
+    // juste le diff. Raison : `initSchema(schemas)` fait `this.schemas =
+    // schemas` (replace, pas merge) côté dialects SQL. Passer le diff
+    // écraserait this.schemas au lieu de l'agréger, ce qui ferait disparaître
+    // les targets populate. initSchema reste idempotent (Mongo: getModel cache ;
+    // SQL: CREATE TABLE IF NOT EXISTS).
+    //
+    // Voir docs/ANOMALIES-LOT3-2026-05-25.md §13 + §16.
+    const allSchemas = getAllSchemas();
+    const hasNew = allSchemas.some(s => !initializedSchemaNames.has(s.name));
+    if (hasNew) {
+      await currentDialect.initSchema(allSchemas);
+      for (const s of allSchemas) initializedSchemaNames.add(s.name);
     }
     return currentDialect;
   }

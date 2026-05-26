@@ -2,6 +2,70 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.7] — 2026-05-26
+
+### Anomalie #16 — Régression du fix #13 : `initSchema(diff)` écrase `this.schemas`
+
+Découvert au smoke parkmanager sample 16 : après attribution RFID via UI, la
+table affichait `()` au lieu du nom du client. Diagnostic : l'API retournait
+`tag.client = "<id-string>"` au lieu de l'objet populé.
+
+**Cause racine** : le fix #13 (2.2.6) passait uniquement le **diff** des
+nouveaux schemas à `initSchema(newSchemas)`. Or `abstract-sql.dialect.ts:1173`
+fait **`this.schemas = schemas;`** (replace, pas merge). Donc :
+
+1. Boot : `initSchema([])` → `this.schemas = []`
+2. `registerSchemas([14])` → premier refresh : `initSchema([14])` → `this.schemas = [14]` ✓
+3. *Mais* si un autre chemin avait pré-initialisé 1 seul schema : `initSchema([1])` → `this.schemas = [1]`, puis refresh `initSchema([13 restants])` → **`this.schemas = [13]`** ❌ (le premier disparu)
+4. `populateRelations` ligne 1641 fait `this.schemas.find(s => s.name === relDef.target)` → target absent → **populate skipped silencieusement** → la FK string reste
+
+Côté Mongo : `getModel(s)` cache global mongoose → les models persistent. Mais
+côté SQL, `this.schemas` est la source de vérité du populate → casse visible.
+
+#### Fixed
+
+**`src/core/factory.ts`** lignes 142-159 — `getDialect()` lazy refresh :
+
+**Avant (2.2.6 buggué)** :
+```ts
+const newSchemas = getAllSchemas().filter(s => !initializedSchemaNames.has(s.name))
+if (newSchemas.length > 0) {
+  await currentDialect.initSchema(newSchemas)         // ← juste le diff
+  for (const s of newSchemas) initializedSchemaNames.add(s.name)
+}
+```
+
+**Après (2.2.7 corrigé)** :
+```ts
+const allSchemas = getAllSchemas()
+const hasNew = allSchemas.some(s => !initializedSchemaNames.has(s.name))
+if (hasNew) {
+  await currentDialect.initSchema(allSchemas)         // ← TOUS
+  for (const s of allSchemas) initializedSchemaNames.add(s.name)
+}
+```
+
+`initSchema` reste **idempotent** :
+- Mongo : `getModel(s)` cache mongoose.models par name
+- SQL : `CREATE TABLE IF NOT EXISTS` + `addMissingColumns` non-destructif
+
+#### Tests
+
+- `test-scripts/singleton-populate-after-refresh.test.mjs` : flow exact du bug :
+  - `registerSchemas([UserSchema])`, `getDialect()` → `this.schemas = [User]`
+  - `registerSchemas([ClientSchema])`, `getDialect()` (refresh) → `this.schemas` doit contenir **User ET Client**
+  - `clients.findByIdWithRelations(c1.id, ['createdBy'])` → `createdBy` populé en objet (pas string id)
+- 127 tests précédents verts → 128/128
+
+#### Rollback
+
+Si régression : `git revert <2.2.7-commit-hash>`. Diff localisé sur 3 lignes
+de `factory.ts` (changement filter→some + paramètre diff→allSchemas).
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.2.6] — 2026-05-26
 
 ### Anomalie #13 — `getDialect()` singleton créé sans schemas
