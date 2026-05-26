@@ -2,6 +2,40 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.8] — 2026-05-26
+
+### Anomalie #12 — Mongo `field.unique` + `indexes[]` doublon
+
+`buildMongooseSchema` (`mongo.dialect.ts:47`) générait deux fois le même
+index quand un schéma déclarait `field.unique: true` ET un index unique
+homonyme dans `entity.indexes`. Conséquence : `IndexKeySpecsConflict` à
+`createIndex`. Le pattern SQL gérait déjà via le fix #10 ; Mongo restait
+en dette (cf. §12 documentée 2.2.5, non fixée).
+
+#### Fixed
+
+`buildMongooseSchema` pré-calcule `fieldsCoveredByUniqueIndex` (`Set<string>`)
+des fields couverts par un index unique single-field dans `entity.indexes`.
+Pour ces fields, **on n'émet plus `schemaDef.unique`** (ligne 95) — l'index
+explicite (avec ses options sparse/partial/etc.) prend le relais sans
+conflit. Cohérent avec le pattern SQL (fix #10).
+
+#### Tests
+
+- 128 tests existants verts (validator + introspection + 10 fix Lot 3 + 2 llms-coverage)
+- Test E2E Mongo via parkmanager (instance amia tunnel) — l'attribution RFID +
+  les schemas avec `email: { unique: true, sparse: true }` + index unique
+  explicite passent désormais sans `IndexKeySpecsConflict`.
+
+#### Impact API
+
+Non-breaking. Schémas redondants (qui doublonnaient `field.unique` + `indexes[]`)
+fonctionnent maintenant côté Mongo (cf. fix #10 côté SQL).
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.2.7] — 2026-05-26
 
 ### Anomalie #16 — Régression du fix #13 : `initSchema(diff)` écrase `this.schemas`
