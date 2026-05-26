@@ -2,6 +2,56 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.9] — 2026-05-26
+
+### Anomalie #14 — `schemaStrategy: 'create-drop'` au boot non implémenté (14 dialectes)
+
+**Découverte** lors du test du sample 16 (mosta-parkmanager) sur Oracle DB
+partagé : `SEED_FRESH=1` (qui passe `SCHEMA_STRATEGY=create-drop` au seed)
+ne droppait PAS les tables — les seeds suivants disaient « 10 clients déjà
+présents, skip » au lieu de reset complet.
+
+**Cause** : Hibernate `hbm2ddl.auto=create-drop` = DROP au boot + DROP au
+shutdown. L'ORM n'implémentait que le shutdown. Au boot, `create-drop` tombait
+dans le path commun `update` / `create` qui fait `CREATE TABLE IF NOT EXISTS`
+(table déjà là → no-op).
+
+Audit confirme l'anomalie sur **tous les 14 dialectes** :
+- Héritent abstract-sql (8) : sqlite, mysql, mariadb, postgres, mssql,
+  cockroachdb, sybase, hsqldb
+- Override `initSchema` (6) : oracle, db2, hana, spanner, mongo (+ parent)
+
+**Anomalie connexe découverte au passage** : `dropTable` du parent faisait
+`DROP TABLE … CASCADE` non gardé. **SQLite rejette `CASCADE`** (syntax error)
+→ l'erreur était silencieusement avalée par `dropSchema()` → drops jamais
+exécutés en SQLite.
+
+### Fix
+
+- `abstract-sql.dialect.ts` `initSchema` : ajout d'un cas `'create-drop'`
+  AVANT la boucle de création, qui appelle `dropSchema(schemas)` (scoped aux
+  schemas register — pas tout le DB).
+- 5 overrides corrigés idem : `oracle.dialect.ts`, `db2.dialect.ts`,
+  `hana.dialect.ts`, `spanner.dialect.ts`, `mongo.dialect.ts`.
+- `mongo.dialect.ts` : ajout de `create-drop` dans la condition
+  `ensureIndexes()` (les indexes doivent être recréés après drop+re-register).
+- `abstract-sql.dialect.ts` : `dropTable` factorisé via `getDropTableSql()`
+  virtuelle (CASCADE par défaut).
+- `sqlite.dialect.ts` : override `getDropTableSql()` sans `CASCADE`.
+
+### Test
+
+- `test-scripts/anomalie-14-create-drop-boot.test.mjs` — scénario reset
+  complet : create + 3 inserts → reconnect create-drop → 0 rows → re-insert
+  → 1 row. **PASS**.
+- 129/129 tests `node --test` passent (aucune régression).
+
+### Documentation
+
+- `docs/ANOMALIES-LOT3-2026-05-25.md §14` — symptôme, cause, fix, test, impact.
+
+---
+
 ## [2.2.8] — 2026-05-26
 
 ### Anomalie #12 — Mongo `field.unique` + `indexes[]` doublon
