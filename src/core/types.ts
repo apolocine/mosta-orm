@@ -293,6 +293,21 @@ export interface ConnectionConfig {
   /** Schema generation strategy (default: 'none') */
   schemaStrategy?: SchemaStrategy;
 
+  /**
+   * Préfixe optionnel appliqué à tous les noms de tables/collections au
+   * runtime. Équivalent Hibernate `hibernate.physical_naming_strategy`.
+   * Utile pour cohabiter plusieurs apps sur le même DB partagé (ex.
+   * `DB_TABLE_PREFIX=mp_` → `users` devient `mp_users`).
+   *
+   * Lu de l'env `DB_TABLE_PREFIX` par `getConfigFromEnv()`. Si vide ou
+   * absent, aucun préfixe (backward-compatible).
+   *
+   * NOTE : ne s'applique PAS aux schémas register : les utilisateurs
+   * continuent à déclarer `collection: 'users'`. Le préfixe est appliqué
+   * en interne par le dialect au moment des opérations SQL/Mongo.
+   */
+  tablePrefix?: string;
+
   // --- Connection pool (hibernate.connection.pool_size) ---
   /** Max connections in pool (default: dialect-specific) */
   poolSize?: number;

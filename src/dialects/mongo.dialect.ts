@@ -21,22 +21,37 @@ const modelCache = new Map<string, Model<any>>();
 
 /**
  * Get or build a Mongoose model from an EntitySchema.
- * Models are cached per entity name (singleton per schema).
+ * Models are cached per entity name + prefix (singleton par couple).
+ *
+ * `tablePrefix` (optionnel) est concaténé à `schema.collection` au moment de
+ * la création du modèle mongoose — équivalent du préfixe table en SQL.
  */
-function getModel(schema: EntitySchema): Model<any> {
-  if (modelCache.has(schema.name)) {
-    return modelCache.get(schema.name)!;
+function getModel(schema: EntitySchema, tablePrefix?: string): Model<any> {
+  const cacheKey = `${tablePrefix ?? ''}:${schema.name}`;
+  if (modelCache.has(cacheKey)) {
+    return modelCache.get(cacheKey)!;
   }
 
-  // Return existing registered model if available
-  if (mongoose.models[schema.name]) {
-    modelCache.set(schema.name, mongoose.models[schema.name]);
-    return mongoose.models[schema.name];
+  const physicalCollection = `${tablePrefix ?? ''}${schema.collection}`;
+
+  // Return existing registered model if available (mongoose key = schema.name
+  // donc partagé entre préfixes — on n'utilise mongoose.models que si la
+  // collection physique correspond ; sinon on instancie un nouveau model).
+  const existing = mongoose.models[schema.name];
+  if (existing && existing.collection?.name === physicalCollection) {
+    modelCache.set(cacheKey, existing);
+    return existing;
   }
 
   const mongSchema = buildMongooseSchema(schema);
-  const model = mongoose.model(schema.name, mongSchema, schema.collection);
-  modelCache.set(schema.name, model);
+  // Si un modèle existe déjà sous schema.name pour une AUTRE collection, on
+  // crée un nom unique pour ne pas le supplanter (cas rare : changement de
+  // tablePrefix au runtime sans clearRegistry).
+  const modelName = existing && existing.collection?.name !== physicalCollection
+    ? `${schema.name}__${tablePrefix ?? ''}`
+    : schema.name;
+  const model = mongoose.model(modelName, mongSchema, physicalCollection);
+  modelCache.set(cacheKey, model);
   return model;
 }
 
@@ -413,7 +428,7 @@ class MongoDialect implements IDialect {
 
     for (const schema of schemas) {
       // Always register models so .populate() can resolve refs (User→Role→Permission)
-      const model = getModel(schema);
+      const model = getModel(schema, this.config?.tablePrefix);
 
       if (strategy === 'update' || strategy === 'create' || strategy === 'create-drop') {
         // Ensure indexes exist (like hbm2ddl.auto=update)
@@ -421,11 +436,12 @@ class MongoDialect implements IDialect {
       }
 
       if (strategy === 'validate') {
-        // Validate that collection exists
-        const collections = await mongoose.connection.db!.listCollections({ name: schema.collection }).toArray();
+        // Validate that collection exists (apply tablePrefix for physical name)
+        const physicalCollection = `${this.config?.tablePrefix ?? ''}${schema.collection}`;
+        const collections = await mongoose.connection.db!.listCollections({ name: physicalCollection }).toArray();
         if (collections.length === 0) {
           throw new Error(
-            `Schema validation failed: collection "${schema.collection}" does not exist ` +
+            `Schema validation failed: collection "${physicalCollection}" does not exist ` +
             `(entity: ${schema.name}). Set schemaStrategy to "update" or "create".`
           );
         }
@@ -436,7 +452,7 @@ class MongoDialect implements IDialect {
   // --- CRUD ---
 
   async find<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T[]> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
     logQuery('FIND', schema.collection, { filter: mongoFilter, options });
     let query = model.find(mongoFilter);
@@ -446,7 +462,7 @@ class MongoDialect implements IDialect {
   }
 
   async findOne<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T | null> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
     logQuery('FIND_ONE', schema.collection, { filter: mongoFilter });
     let query = model.findOne(mongoFilter);
@@ -456,7 +472,7 @@ class MongoDialect implements IDialect {
   }
 
   async findById<T>(schema: EntitySchema, id: string, options?: QueryOptions): Promise<T | null> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema, options));
     logQuery('FIND_BY_ID', schema.collection, { id });
     let query = model.findOne(mongoFilter);
@@ -466,7 +482,7 @@ class MongoDialect implements IDialect {
   }
 
   async create<T>(schema: EntitySchema, data: Record<string, unknown>): Promise<T> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const insertData = applyDiscriminatorToData(data, schema);
     logQuery('CREATE', schema.collection, insertData);
     const doc = await model.create(insertData);
@@ -474,7 +490,7 @@ class MongoDialect implements IDialect {
   }
 
   async update<T>(schema: EntitySchema, id: string, data: Record<string, unknown>): Promise<T | null> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('UPDATE', schema.collection, { id, data });
     const doc = await model.findOneAndUpdate(mongoFilter, data, { returnDocument: 'after' }).lean();
@@ -482,7 +498,7 @@ class MongoDialect implements IDialect {
   }
 
   async updateMany(schema: EntitySchema, filter: DALFilter, data: Record<string, unknown>): Promise<number> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters(filter, schema));
     logQuery('UPDATE_MANY', schema.collection, { filter: mongoFilter, data });
     const result = await model.updateMany(mongoFilter, data);
@@ -490,7 +506,7 @@ class MongoDialect implements IDialect {
   }
 
   async delete(schema: EntitySchema, id: string): Promise<boolean> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyDiscriminator({ _id: id }, schema));
     if (schema.softDelete) {
       logQuery('SOFT_DELETE', schema.collection, { id });
@@ -503,7 +519,7 @@ class MongoDialect implements IDialect {
   }
 
   async deleteMany(schema: EntitySchema, filter: DALFilter): Promise<number> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     if (schema.softDelete) {
       const mongoFilter = translateFilter(applyAllFilters(filter, schema));
       logQuery('SOFT_DELETE_MANY', schema.collection, { filter: mongoFilter });
@@ -519,21 +535,21 @@ class MongoDialect implements IDialect {
   // --- Queries ---
 
   async count(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<number> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
     logQuery('COUNT', schema.collection, { filter: mongoFilter });
     return model.countDocuments(mongoFilter);
   }
 
   async distinct(schema: EntitySchema, field: string, filter: DALFilter, options?: QueryOptions): Promise<unknown[]> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
     logQuery('DISTINCT', schema.collection, { field, filter: mongoFilter });
     return model.distinct(field, mongoFilter);
   }
 
   async aggregate<T>(schema: EntitySchema, stages: AggregateStage[], options?: QueryOptions): Promise<T[]> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
 
     // Inject discriminator + soft-delete as first $match stage (respecte options.includeDeleted)
     const discriminatorMatch = translateFilter(applyAllFilters({}, schema, options));
@@ -590,7 +606,7 @@ class MongoDialect implements IDialect {
     relations: string[],
     options?: QueryOptions,
   ): Promise<T[]> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters(filter, schema));
     logQuery('FIND_WITH_RELATIONS', schema.collection, { filter: mongoFilter, relations });
 
@@ -663,7 +679,7 @@ class MongoDialect implements IDialect {
     relations: string[],
     options?: QueryOptions,
   ): Promise<T | null> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('FIND_BY_ID_WITH_RELATIONS', schema.collection, { id, relations });
 
@@ -716,7 +732,7 @@ class MongoDialect implements IDialect {
   // --- Upsert (equivalent Hibernate saveOrUpdate / merge) ---
 
   async upsert<T>(schema: EntitySchema, filter: DALFilter, data: Record<string, unknown>): Promise<T> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters(filter, schema));
     const insertData = applyDiscriminatorToData(data, schema);
     logQuery('UPSERT', schema.collection, { filter: mongoFilter, data: insertData });
@@ -735,7 +751,7 @@ class MongoDialect implements IDialect {
     field: string,
     amount: number,
   ): Promise<Record<string, unknown>> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     logQuery('INCREMENT', schema.collection, { id, field, amount });
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
     const idVal = isObjectId ? new mongoose.Types.ObjectId(id) : id;
@@ -756,7 +772,7 @@ class MongoDialect implements IDialect {
     field: string,
     value: unknown,
   ): Promise<Record<string, unknown> | null> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('ADD_TO_SET', schema.collection, { id, field, value });
     const doc = await model.findOneAndUpdate(
@@ -773,7 +789,7 @@ class MongoDialect implements IDialect {
     field: string,
     value: unknown,
   ): Promise<Record<string, unknown> | null> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('PULL', schema.collection, { id, field, value });
     const doc = await model.findOneAndUpdate(
@@ -792,7 +808,7 @@ class MongoDialect implements IDialect {
     fields: string[],
     options?: QueryOptions,
   ): Promise<T[]> {
-    const model = getModel(schema);
+    const model = getModel(schema, this.config?.tablePrefix);
 
     // Build $or with $regex for each field (works with or without text index)
     const orConditions = fields.map(field => ({

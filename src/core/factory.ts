@@ -129,6 +129,7 @@ export function getConfigFromEnv(): ConnectionConfig {
     formatSql:       getEnvBool('DB_FORMAT_SQL', false),
     highlightSql:    getEnvBool('DB_HIGHLIGHT_SQL', false),
     schemaStrategy:  (getEnv('DB_SCHEMA_STRATEGY', 'none')) as ConnectionConfig['schemaStrategy'],
+    tablePrefix:     getEnv('DB_TABLE_PREFIX') || undefined,
     poolSize:        getEnvNumber('DB_POOL_SIZE'),
     cacheEnabled:    getEnvBool('DB_CACHE_ENABLED', false),
     cacheTtlSeconds: getEnvNumber('DB_CACHE_TTL'),

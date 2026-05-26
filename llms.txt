@@ -1,8 +1,8 @@
 # @mostajs/orm — fiche LLM
 > ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
 
-- Version: 2.2.9 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
-- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers fixes : #12 Mongo index doublon (2.2.8), #14 create-drop boot 14 dialectes + SQLite CASCADE (2.2.9)
+- Version: 2.3.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers : #14 create-drop boot 14 dialectes (2.2.9), **feature DB_TABLE_PREFIX cohabitation multi-apps (2.3.0)**
 
 ## RÔLE
 Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
@@ -136,7 +136,12 @@ mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/option
   inverseJoinColumn?, onDelete? }
 - RelationType = 'one-to-one'|'many-to-one'|'one-to-many'|'many-to-many'
 - ConnectionConfig : { dialect, uri, showSql?, formatSql?, highlightSql?, schemaStrategy?,
-  poolSize?, cacheEnabled?, cacheTtlSeconds?, batchSize?, options? }
+  tablePrefix?, poolSize?, cacheEnabled?, cacheTtlSeconds?, batchSize?, options? }
+  - `tablePrefix?: string` (2.3.0) — préfixe optionnel appliqué à tous les noms
+    de tables/collections (= Hibernate `physical_naming_strategy`). Lu de l'env
+    `DB_TABLE_PREFIX`. Permet à plusieurs apps de cohabiter sur un même DB
+    sans collision. **Recommandé sur Oracle, MSSQL, HANA** (mono-schema lié
+    au user de connexion) dès que le user DB est partagé entre apps.
 - SchemaStrategy = 'validate'|'update'|'create'|'create-drop'|'none' (= hbm2ddl.auto)
 - FilterQuery : objet MongoDB-like ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin/$regex/$exists, $or/$and)
 - QueryOptions : { sort?, skip?, limit?, select?, exclude?, includeDeleted? }
@@ -278,6 +283,7 @@ const found = await users.findOne({ email: 'a@b.c' });
 - `getDialect()` est un singleton ; pour plusieurs connexions simultanées utiliser
   `createIsolatedDialect()` (hors singleton, schémas non enregistrés globalement).
 - `schemaStrategy: 'create'` drop tout le DB au boot puis recrée. `'create-drop'` (≥ 2.2.9) drop **scoped aux schemas register** au boot ET au shutdown — sécurise les DB partagées entre apps (cf. anomalie #14). En prod : `'validate'`.
+- **Cohabitation multi-apps sur un même DB** (2.3.0) : utiliser `DB_TABLE_PREFIX=<app>_`. Sur Oracle/MSSQL/HANA en particulier, le schéma SQL est lié au user de connexion → si plusieurs apps utilisent le même user, leurs tables `users` / `roles` / `permissions` se mélangent silencieusement. Avec un préfixe, chaque app a son namespace : `users` → `app1_users`, `app2_users`, …
 - `softDelete: true` sur un `EntitySchema` :
   - **injecte automatiquement** le champ `deletedAt: Date | null`. Pas besoin de le déclarer.
   - **filtre automatiquement** `findAll` / `findOne` / `findById` / `count` / `search` /
