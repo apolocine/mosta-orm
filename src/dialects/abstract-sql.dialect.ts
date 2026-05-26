@@ -1088,15 +1088,32 @@ export abstract class AbstractSqlDialect implements IDialect {
     }
 
     if (config.schemaStrategy === 'create') {
-      this.log('SCHEMA', 'create — dropping existing tables');
-      await this.dropAllTables();
+      // Drop SCOPED aux schemas qui SERONT register par initSchema (this.schemas
+      // est encore vide ici — on déclenche le drop scoped en lazy via initSchema
+      // qui handle déjà create-drop boot ; pour 'create' strict, on log et on
+      // laisse initSchema gérer via le même path scoped).
+      // Si l'utilisateur veut le legacy "drop tout le DB" pour 'create', il peut
+      // appeler explicitement `await dialect.dropAllTables()` avant connect.
+      this.log('SCHEMA', 'create — drop+recreate délégué à initSchema (scoped)');
     }
   }
 
   async disconnect(): Promise<void> {
     if (this.config?.schemaStrategy === 'create-drop') {
-      this.log('SCHEMA', 'create-drop — dropping all tables on shutdown');
-      await this.dropAllTables();
+      // Drop SCOPED aux schemas register (pas tout le DB) — cohérent avec le
+      // DROP au boot (anomalie #14 fix 2.2.9). Sans ce scope, deux process
+      // séquentiels qui partagent la DB en mode 'create-drop' au boot mais
+      // 'update' au seed suivant verraient leurs données effacées au
+      // shutdown du premier (cas révélé par seeds/index.ts SEED_FRESH=1).
+      // Si `schemas` est vide (rare), on retombe sur dropAllTables comme
+      // avant pour ne pas régresser le cas test isolé.
+      if (this.schemas && this.schemas.length > 0) {
+        this.log('SCHEMA', `create-drop — dropping ${this.schemas.length} registered schemas on shutdown`);
+        await this.dropSchema(this.schemas);
+      } else {
+        this.log('SCHEMA', 'create-drop — dropping all tables on shutdown (no registered schemas)');
+        await this.dropAllTables();
+      }
     }
 
     if (this.jdbcBridgeActive && this.bridgeInstance) {
@@ -1285,10 +1302,11 @@ export abstract class AbstractSqlDialect implements IDialect {
     }
 
     // Hibernate hbm2ddl.auto=create-drop : DROP au boot ET au shutdown.
-    // Sans ce DROP au boot, le seed sur DB partagée trouve les anciennes lignes
-    // et croit que tout est déjà seedé (anomalie #14 — pre-2.2.9).
-    if (strategy === 'create-drop') {
-      this.log('SCHEMA', 'create-drop boot — dropping registered schemas before re-create');
+    // Hibernate hbm2ddl.auto=create : DROP au boot, PAS au shutdown.
+    // Les deux passent par dropSchema(schemas) scoped — sécurise les DB
+    // partagées entre apps (anomalie #14 — pre-2.2.9).
+    if (strategy === 'create-drop' || strategy === 'create') {
+      this.log('SCHEMA', `${strategy} boot — dropping registered schemas before re-create`);
       await this.dropSchema(schemas);
     }
 

@@ -347,7 +347,7 @@ class OracleDialect extends AbstractSqlDialect {
     // Hibernate hbm2ddl.auto=create-drop : DROP au boot ET au shutdown.
     // Sans ce DROP au boot, le seed sur DB partagée trouve les anciennes lignes
     // et croit que tout est déjà seedé (anomalie #14 — pre-2.2.9).
-    if (strategy === 'create-drop') {
+    if (strategy === 'create-drop' || strategy === 'create') {
       this.log('SCHEMA', 'create-drop boot — dropping registered schemas before re-create');
       await this.dropSchema(schemas);
     }
