@@ -238,7 +238,7 @@ class DB2Dialect extends AbstractSqlDialect {
     }
 
     // Anomalie #14 (fix 2.2.9) : create-drop = DROP au boot + DROP au shutdown.
-    if (strategy === 'create-drop') {
+    if (strategy === 'create-drop' || strategy === 'create') {
       this.log('SCHEMA', 'create-drop boot — dropping registered schemas before re-create');
       await this.dropSchema(schemas);
     }
