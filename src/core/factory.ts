@@ -15,6 +15,16 @@ import { getEnv, getEnvBool, getEnvNumber, getCurrentProfile } from '@mostajs/co
 let currentDialect: IDialect | null = null;
 let currentConfig: ConnectionConfig | null = null;
 
+/**
+ * Tracking des schemas déjà passés à `initSchema` sur le singleton courant.
+ * Permet le lazy refresh quand `registerSchemas` est appelé APRÈS `getDialect()`
+ * (cas typique : @mostajs/auth crée le singleton au boot Next.js avant que
+ * le code applicatif ait pu remplir le registry).
+ * Reset par `disconnectDialect()`.
+ * Voir docs/ANOMALIES-LOT3-2026-05-25.md §13.
+ */
+const initializedSchemaNames = new Set<string>();
+
 /** Whitelist of supported dialect module filenames (prevents arbitrary require). */
 const DIALECT_FILE: Record<DialectType, string> = {
   mongodb:     'mongo.dialect.js',
@@ -132,6 +142,17 @@ export function getConfigFromEnv(): ConnectionConfig {
  */
 export async function getDialect(config?: ConnectionConfig): Promise<IDialect> {
   if (currentDialect) {
+    // Lazy refresh : si registerSchemas a ajouté des schemas DEPUIS le dernier
+    // initSchema, ré-initialiser uniquement les nouveaux. Cas typique :
+    // @mostajs/auth a créé le singleton AVANT que registerSchemas applicatif
+    // ne soit appelé — sans ce refresh, mongoose.models reste vide et
+    // tout populate cross-schema crashe MissingSchemaError.
+    // Voir docs/ANOMALIES-LOT3-2026-05-25.md §13.
+    const newSchemas = getAllSchemas().filter(s => !initializedSchemaNames.has(s.name));
+    if (newSchemas.length > 0) {
+      await currentDialect.initSchema(newSchemas);
+      for (const s of newSchemas) initializedSchemaNames.add(s.name);
+    }
     return currentDialect;
   }
 
@@ -145,7 +166,9 @@ export async function getDialect(config?: ConnectionConfig): Promise<IDialect> {
     currentConfig = cfg;
 
     // Hibernate SessionFactory — register all entity models on first connection
-    await currentDialect.initSchema(getAllSchemas());
+    const all = getAllSchemas();
+    await currentDialect.initSchema(all);
+    for (const s of all) initializedSchemaNames.add(s.name);
 
     return currentDialect;
   } catch (err: unknown) {
@@ -178,6 +201,7 @@ export async function disconnectDialect(): Promise<void> {
     await currentDialect.disconnect();
     currentDialect = null;
     currentConfig = null;
+    initializedSchemaNames.clear();   // reset tracking pour future recreation
   }
 }
 
