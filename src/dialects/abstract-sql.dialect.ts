@@ -134,6 +134,24 @@ export abstract class AbstractSqlDialect implements IDialect {
   /** Quote an identifier (column/table name) for this dialect */
   abstract quoteIdentifier(name: string): string;
 
+  /**
+   * Applique `config.tablePrefix` (si défini) à un nom logique. À utiliser
+   * SYSTÉMATIQUEMENT côté dialect avant `quoteIdentifier()` pour toute
+   * référence physique à une table — y compris junction tables (m2m through),
+   * tableExists(), CREATE TABLE / DROP TABLE / ALTER TABLE / CREATE INDEX,
+   * et toute clause `FROM x` / `INSERT INTO x` / `UPDATE x` / `DELETE FROM x`.
+   *
+   * Lecture seule (ne touche pas à `schema.collection`) : permet aux schémas
+   * register de rester portables — seul le SQL physique est préfixé.
+   * Backward-compatible : si tablePrefix est undefined ou vide, retourne `name`
+   * inchangé.
+   */
+  protected getPrefixedName(name: string): string {
+    const prefix = this.config?.tablePrefix;
+    if (!prefix) return name;
+    return `${prefix}${name}`;
+  }
+
   /** Get the parameter placeholder for index (1-based). E.g. $1, ?, :1, @p1 */
   abstract getPlaceholder(index: number): string;
 
@@ -255,7 +273,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
   /** Get the CREATE TABLE prefix, including IF NOT EXISTS when supported */
   protected getCreateTablePrefix(tableName: string): string {
-    const q = this.quoteIdentifier(tableName);
+    const q = this.quoteIdentifier(this.getPrefixedName(tableName));
     return this.supportsIfNotExists()
       ? `CREATE TABLE IF NOT EXISTS ${q}`
       : `CREATE TABLE ${q}`;
@@ -973,7 +991,7 @@ export abstract class AbstractSqlDialect implements IDialect {
         const targetCollection = targetCollections.get(rel.target) || rel.target.toLowerCase();
         const onDel = rel.onDelete || (rel.nullable !== false ? 'set-null' : 'restrict');
         const onDelSql = onDel.toUpperCase().replace('-', ' ');
-        cols.push(`  FOREIGN KEY (${q(colName)}) REFERENCES ${q(targetCollection)}(${q('id')}) ON DELETE ${onDelSql}`);
+        cols.push(`  FOREIGN KEY (${q(colName)}) REFERENCES ${q(this.getPrefixedName(targetCollection))}(${q('id')}) ON DELETE ${onDelSql}`);
       }
     }
 
@@ -997,7 +1015,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       const idxName = `idx_${schema.collection}_${i}`;
       const colDefs = fields.map(([f, dir]) => `${this.quoteIdentifier(f)} ${dir === 'desc' ? 'DESC' : 'ASC'}`);
-      let stmt = `${this.getCreateIndexPrefix(idxName, idx.unique ?? false)} ON ${this.quoteIdentifier(schema.collection)} (${colDefs.join(', ')})`;
+      let stmt = `${this.getCreateIndexPrefix(idxName, idx.unique ?? false)} ON ${this.quoteIdentifier(this.getPrefixedName(schema.collection))} (${colDefs.join(', ')})`;
       // Partial unique index sur softDelete : sparse:true sur unique index
       // d'un schéma softDelete → WHERE deletedAt IS NULL. Permet la réinsertion
       // après soft-delete (R003B). Voir docs/ANOMALIES-LOT3-2026-05-25.md §10.
@@ -1024,7 +1042,7 @@ export abstract class AbstractSqlDialect implements IDialect {
         if (covered) continue;
         const idxName = `uidx_${schema.collection}_${name}_softdelete`;
         statements.push(
-          `${this.getCreateIndexPrefix(idxName, true)} ON ${this.quoteIdentifier(schema.collection)} (${this.quoteIdentifier(name)}) WHERE ${this.quoteIdentifier('deletedAt')} IS NULL`,
+          `${this.getCreateIndexPrefix(idxName, true)} ON ${this.quoteIdentifier(this.getPrefixedName(schema.collection))} (${this.quoteIdentifier(name)}) WHERE ${this.quoteIdentifier('deletedAt')} IS NULL`,
         );
         autoIdx++;
       }
@@ -1350,8 +1368,8 @@ export abstract class AbstractSqlDialect implements IDialect {
           const onDel = rel.onDelete || (rel.nullable !== false ? 'set-null' : 'restrict');
           const onDelSql = onDel.toUpperCase().replace('-', ' ');
           const fkName = `fk_${schema.collection}_${colName}`;
-          const sql = `ALTER TABLE ${q(schema.collection)} ADD CONSTRAINT ${q(fkName)} ` +
-            `FOREIGN KEY (${q(colName)}) REFERENCES ${q(targetSchema.collection)}(${q('id')}) ` +
+          const sql = `ALTER TABLE ${q(this.getPrefixedName(schema.collection))} ADD CONSTRAINT ${q(fkName)} ` +
+            `FOREIGN KEY (${q(colName)}) REFERENCES ${q(this.getPrefixedName(targetSchema.collection))}(${q('id')}) ` +
             `ON DELETE ${onDelSql}`;
           try {
             await this.executeRun(sql, []);
@@ -1371,12 +1389,12 @@ export abstract class AbstractSqlDialect implements IDialect {
           const fkTarget = `fk_${rel.through}_${targetKey}`;
           try {
             await this.executeRun(
-              `ALTER TABLE ${q(rel.through)} ADD CONSTRAINT ${q(fkSource)} ` +
-              `FOREIGN KEY (${q(sourceKey)}) REFERENCES ${q(schema.collection)}(${q('id')}) ON DELETE CASCADE`, []
+              `ALTER TABLE ${q(this.getPrefixedName(rel.through))} ADD CONSTRAINT ${q(fkSource)} ` +
+              `FOREIGN KEY (${q(sourceKey)}) REFERENCES ${q(this.getPrefixedName(schema.collection))}(${q('id')}) ON DELETE CASCADE`, []
             );
             await this.executeRun(
-              `ALTER TABLE ${q(rel.through)} ADD CONSTRAINT ${q(fkTarget)} ` +
-              `FOREIGN KEY (${q(targetKey)}) REFERENCES ${q(targetSchema.collection)}(${q('id')}) ON DELETE CASCADE`, []
+              `ALTER TABLE ${q(this.getPrefixedName(rel.through))} ADD CONSTRAINT ${q(fkTarget)} ` +
+              `FOREIGN KEY (${q(targetKey)}) REFERENCES ${q(this.getPrefixedName(targetSchema.collection))}(${q('id')}) ON DELETE CASCADE`, []
             );
             this.log('FK_JUNCTION', rel.through, `${fkSource}, ${fkTarget}`);
           } catch (e) {
@@ -1398,7 +1416,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     const cols = this.buildSelectColumns(schema, options);
     const orderBy = this.buildOrderBy(options);
     const limitOffset = this.buildLimitOffset(options);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
 
     const sql = `SELECT ${cols} FROM ${table} WHERE ${where.sql}${orderBy}${limitOffset}`;
     this.log('FIND', schema.collection, { sql, params: where.params });
@@ -1415,7 +1433,7 @@ export abstract class AbstractSqlDialect implements IDialect {
   async findById<T>(schema: EntitySchema, id: string, options?: QueryOptions): Promise<T | null> {
     this.resetParams();
     const cols = this.buildSelectColumns(schema, options);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
 
     // Build WHERE with discriminator + soft-delete
     const extraFilter = this.applySoftDeleteFilter(this.applyDiscriminator({ id }, schema), schema, options);
@@ -1440,7 +1458,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     this.resetParams();
     const insertData = this.applyDiscriminatorToData(data, schema);
     const { columns, placeholders, values } = this.prepareInsertData(schema, insertData);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
     const colsSql = columns.map(c => this.quoteIdentifier(c)).join(', ');
 
     const sql = `INSERT INTO ${table} (${colsSql}) VALUES (${placeholders.join(', ')})`;
@@ -1465,7 +1483,7 @@ export abstract class AbstractSqlDialect implements IDialect {
           const p1 = this.nextPlaceholder();
           const p2 = this.nextPlaceholder();
           await this.executeRun(
-            `INSERT INTO ${this.quoteIdentifier(rel.through)} (${this.quoteIdentifier(sourceKey)}, ${this.quoteIdentifier(targetKey)}) VALUES (${p1}, ${p2})`,
+            `INSERT INTO ${this.quoteIdentifier(this.getPrefixedName(rel.through))} (${this.quoteIdentifier(sourceKey)}, ${this.quoteIdentifier(targetKey)}) VALUES (${p1}, ${p2})`,
             [entityId, targetId]
           );
         }
@@ -1483,7 +1501,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     const { setClauses, values } = this.prepareUpdateData(schema, data);
 
     if (setClauses.length > 0) {
-      const table = this.quoteIdentifier(schema.collection);
+      const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
       const effectiveFilter = this.applyDiscriminator({ id }, schema);
       const where = this.translateFilter(effectiveFilter, schema);
       const sql = `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${where.sql}`;
@@ -1551,7 +1569,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
     const where = this.translateFilter(effectiveFilter, schema);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
 
     const sql = `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${where.sql}`;
     const allValues = [...values, ...where.params];
@@ -1565,7 +1583,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     // Soft-delete: set deletedAt instead of removing
     if (schema.softDelete) {
       this.resetParams();
-      const table = this.quoteIdentifier(schema.collection);
+      const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
       const datePh = this.nextPlaceholder();
       const effectiveFilter = this.applyDiscriminator({ id }, schema);
       const where = this.translateFilter(effectiveFilter, schema);
@@ -1581,14 +1599,14 @@ export abstract class AbstractSqlDialect implements IDialect {
         const sourceKey = `${schema.name.toLowerCase()}Id`;
         const ph = this.nextPlaceholder();
         await this.executeRun(
-          `DELETE FROM ${this.quoteIdentifier(rel.through)} WHERE ${this.quoteIdentifier(sourceKey)} = ${ph}`,
+          `DELETE FROM ${this.quoteIdentifier(this.getPrefixedName(rel.through))} WHERE ${this.quoteIdentifier(sourceKey)} = ${ph}`,
           [id]
         );
       }
     }
 
     this.resetParams();
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
     const effectiveFilter = this.applyDiscriminator({ id }, schema);
     const where = this.translateFilter(effectiveFilter, schema);
 
@@ -1602,7 +1620,7 @@ export abstract class AbstractSqlDialect implements IDialect {
   async deleteMany(schema: EntitySchema, filter: DALFilter): Promise<number> {
     this.resetParams();
     const effectiveFilter = this.applyDiscriminator(filter, schema);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
 
     if (schema.softDelete) {
       const datePh = this.nextPlaceholder();
@@ -1658,7 +1676,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     this.resetParams();
     const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema, options);
     const where = this.translateFilter(effectiveFilter, schema);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
 
     const sql = `SELECT COUNT(*) as cnt FROM ${table} WHERE ${where.sql}`;
     this.log('COUNT', schema.collection, { sql, params: where.params });
@@ -1671,7 +1689,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     this.resetParams();
     const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema, options);
     const where = this.translateFilter(effectiveFilter, schema);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
 
     const sql = `SELECT DISTINCT ${this.quoteIdentifier(field)} FROM ${table} WHERE ${where.sql}`;
     this.log('DISTINCT', schema.collection, { sql, params: where.params });
@@ -1747,7 +1765,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
     if (selectCols.length === 0) selectCols = ['*'];
 
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
     let sql = `SELECT ${selectCols.join(', ')} FROM ${table} WHERE ${whereClause}`;
     if (groupBy) sql += ` GROUP BY ${groupBy}`;
     sql += orderBy + limit;
@@ -1834,7 +1852,7 @@ export abstract class AbstractSqlDialect implements IDialect {
         this.resetParams();
         const ph = this.nextPlaceholder();
         const junctionRows = await this.executeQuery<Record<string, string>>(
-          `SELECT ${this.quoteIdentifier(targetKey)} FROM ${this.quoteIdentifier(relDef.through)} WHERE ${this.quoteIdentifier(sourceKey)} = ${ph}`,
+          `SELECT ${this.quoteIdentifier(targetKey)} FROM ${this.quoteIdentifier(this.getPrefixedName(relDef.through))} WHERE ${this.quoteIdentifier(sourceKey)} = ${ph}`,
           [result.id]
         );
 
@@ -1911,7 +1929,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     if (existing) {
       this.resetParams();
       const col = this.quoteIdentifier(field);
-      const table = this.quoteIdentifier(schema.collection);
+      const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
       const ph = this.nextPlaceholder();
       let sql = `UPDATE ${table} SET ${col} = COALESCE(${col}, 0) + ${ph}`;
       const params: unknown[] = [amount];
@@ -1962,7 +1980,7 @@ export abstract class AbstractSqlDialect implements IDialect {
       // Use INSERT and ignore duplicates — dialect-specific handling in executeRun if needed
       try {
         await this.executeRun(
-          `INSERT INTO ${this.quoteIdentifier(relDef.through)} (${this.quoteIdentifier(sourceKey)}, ${this.quoteIdentifier(targetKey)}) VALUES (${p1}, ${p2})`,
+          `INSERT INTO ${this.quoteIdentifier(this.getPrefixedName(relDef.through))} (${this.quoteIdentifier(sourceKey)}, ${this.quoteIdentifier(targetKey)}) VALUES (${p1}, ${p2})`,
           [id, value]
         );
       } catch {
@@ -1986,7 +2004,7 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       this.resetParams();
       const col = this.quoteIdentifier(field);
-      const table = this.quoteIdentifier(schema.collection);
+      const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
       let sql = `UPDATE ${table} SET ${col} = ${this.nextPlaceholder()}`;
       const params: unknown[] = [JSON.stringify(arr)];
 
@@ -2027,7 +2045,7 @@ export abstract class AbstractSqlDialect implements IDialect {
       const p1 = this.nextPlaceholder();
       const p2 = this.nextPlaceholder();
       await this.executeRun(
-        `DELETE FROM ${this.quoteIdentifier(relDef.through)} WHERE ${this.quoteIdentifier(sourceKey)} = ${p1} AND ${this.quoteIdentifier(targetKey)} = ${p2}`,
+        `DELETE FROM ${this.quoteIdentifier(this.getPrefixedName(relDef.through))} WHERE ${this.quoteIdentifier(sourceKey)} = ${p1} AND ${this.quoteIdentifier(targetKey)} = ${p2}`,
         [id, value]
       );
       return this.findById<Record<string, unknown>>(schema, id);
@@ -2046,7 +2064,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     if (filtered.length !== arr.length) {
       this.resetParams();
       const col = this.quoteIdentifier(field);
-      const table = this.quoteIdentifier(schema.collection);
+      const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
       let sql = `UPDATE ${table} SET ${col} = ${this.nextPlaceholder()}`;
       const params: unknown[] = [JSON.stringify(filtered)];
 
@@ -2085,7 +2103,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     const cols = this.buildSelectColumns(schema, options);
     const orderBy = this.buildOrderBy(options);
     const limitOffset = this.buildLimitOffset(options);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
 
     // Apply discriminator + soft-delete (respecte options.includeDeleted)
     const extraFilter = this.applySoftDeleteFilter(this.applyDiscriminator({}, schema), schema, options);
@@ -2104,8 +2122,13 @@ export abstract class AbstractSqlDialect implements IDialect {
   // Private helpers
   // ============================================================
 
-  /** Check if a table exists */
+  /**
+   * Check if a table exists. Accepts the logical name (`schema.collection` ou
+   * `rel.through`) — applique `tablePrefix` en interne avant la comparaison
+   * avec le catalogue du dialect.
+   */
   protected async tableExists(tableName: string): Promise<boolean> {
+    const physicalName = this.getPrefixedName(tableName);
     try {
       const query = this.getTableListQuery();
       const rows = await this.executeQuery<{ name: string }>(query, []);
@@ -2115,11 +2138,11 @@ export abstract class AbstractSqlDialect implements IDialect {
           || (r as Record<string, unknown>).TABLE_NAME
           || (r as Record<string, unknown>).table_name
           || Object.values(r)[0];
-        return name === tableName;
+        return name === physicalName;
       });
     } catch (e) {
       // scan-ignore: existence check — false = "table absente OU erreur listing", documenté ainsi
-      this.log('TABLE_EXISTS', `${tableName} check failed: ${(e as Error).message}`);
+      this.log('TABLE_EXISTS', `${physicalName} check failed: ${(e as Error).message}`);
       return false;
     }
   }
@@ -2127,7 +2150,7 @@ export abstract class AbstractSqlDialect implements IDialect {
   /** Drop all tables (used by 'create' and 'create-drop' strategies) */
   /** Truncate (empty) a single table — keeps structure, deletes all data */
   async truncateTable(tableName: string): Promise<void> {
-    await this.executeRun(`DELETE FROM ${this.quoteIdentifier(tableName)}`, []);
+    await this.executeRun(`DELETE FROM ${this.quoteIdentifier(this.getPrefixedName(tableName))}`, []);
     this.log('TRUNCATE', tableName);
   }
 
@@ -2165,7 +2188,7 @@ export abstract class AbstractSqlDialect implements IDialect {
    * CONSTRAINTS, SQLite : pas de CASCADE supporté du tout).
    */
   protected getDropTableSql(tableName: string): string {
-    return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)} CASCADE`;
+    return `DROP TABLE IF EXISTS ${this.quoteIdentifier(this.getPrefixedName(tableName))} CASCADE`;
   }
 
   /** Drop a single table by name */

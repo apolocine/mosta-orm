@@ -122,7 +122,7 @@ class OracleDialect extends AbstractSqlDialect {
   async dropTable(tableName: string): Promise<void> {
     const sql =
       `BEGIN ` +
-      `  EXECUTE IMMEDIATE 'DROP TABLE ${this.quoteIdentifier(tableName)} CASCADE CONSTRAINTS PURGE'; ` +
+      `  EXECUTE IMMEDIATE 'DROP TABLE ${this.quoteIdentifier(this.getPrefixedName(tableName))} CASCADE CONSTRAINTS PURGE'; ` +
       `EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; ` +
       `END;`;
     await this.executeRun(sql, []);
@@ -134,14 +134,16 @@ class OracleDialect extends AbstractSqlDialect {
       // Oracle stores unquoted identifiers in upper case (USERS) and quoted
       // identifiers verbatim ("users"). Match both : try the raw name first,
       // then upper-case fallback if nothing came back.
+      // ALTER TABLE / introspection physiques → tablePrefix appliqué ici.
+      const physicalName = this.getPrefixedName(tableName);
       const fetch = async (name: string) =>
         this.executeQuery<{ COLUMN_NAME?: string; column_name?: string }>(
           `SELECT column_name FROM user_tab_columns WHERE table_name = :1`,
           [name],
         );
-      let rows = await fetch(tableName);
-      if (rows.length === 0 && tableName !== tableName.toUpperCase()) {
-        rows = await fetch(tableName.toUpperCase());
+      let rows = await fetch(physicalName);
+      if (rows.length === 0 && physicalName !== physicalName.toUpperCase()) {
+        rows = await fetch(physicalName.toUpperCase());
       }
       const set = new Set<string>();
       for (const r of rows) {
@@ -198,7 +200,7 @@ class OracleDialect extends AbstractSqlDialect {
 
   // Oracle: use PL/SQL block to check existence before CREATE TABLE
   protected getCreateTablePrefix(tableName: string): string {
-    const q = this.quoteIdentifier(tableName);
+    const q = this.quoteIdentifier(this.getPrefixedName(tableName));
     return `CREATE TABLE ${q}`;
   }
 
@@ -388,7 +390,7 @@ class OracleDialect extends AbstractSqlDialect {
           const targetKey = `${rel.target.toLowerCase()}Id`;
           const q = (n: string) => this.quoteIdentifier(n);
           const idType = this.getIdColumnType();
-          const ddl = `CREATE TABLE ${q(rel.through)} (
+          const ddl = `CREATE TABLE ${q(this.getPrefixedName(rel.through))} (
   ${q(sourceKey)} ${idType} NOT NULL,
   ${q(targetKey)} ${idType} NOT NULL,
   PRIMARY KEY (${q(sourceKey)}, ${q(targetKey)})
@@ -406,7 +408,7 @@ class OracleDialect extends AbstractSqlDialect {
     this.resetParams();
     const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
     const where = this.translateFilter(effectiveFilter, schema);
-    const table = this.quoteIdentifier(schema.collection);
+    const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
     const sql = `SELECT COUNT(*) as cnt FROM ${table} WHERE ${where.sql}`;
     this.log('COUNT', schema.collection, { sql, params: where.params });
     const rows = await this.executeQuery<Record<string, unknown>>(sql, where.params);
