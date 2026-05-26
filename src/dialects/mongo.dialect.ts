@@ -421,7 +421,7 @@ class MongoDialect implements IDialect {
     // Anomalie #14 (fix 2.2.9) : create-drop = DROP au boot + DROP au shutdown.
     // Symétrique du DROP de shutdown ligne 371 — sans ce drop boot, un seed
     // sur DB partagée trouve les anciennes collections et croit que tout est seedé.
-    if (strategy === 'create-drop') {
+    if (strategy === 'create-drop' || strategy === 'create') {
       logQuery('SCHEMA', 'create-drop boot — dropping registered collections before re-create');
       await this.dropSchema(schemas);
     }
