@@ -1,8 +1,8 @@
 # @mostajs/orm — fiche LLM
 > ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
 
-- Version: 2.2.8 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
-- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#13 + #16 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) + #12 Mongo index doublon (2.2.8)
+- Version: 2.2.9 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers fixes : #12 Mongo index doublon (2.2.8), #14 create-drop boot 14 dialectes + SQLite CASCADE (2.2.9)
 
 ## RÔLE
 Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
@@ -277,7 +277,7 @@ const found = await users.findOne({ email: 'a@b.c' });
   ou `extractRelId(value)` pour des comparaisons sûres en lazy comme en eager.
 - `getDialect()` est un singleton ; pour plusieurs connexions simultanées utiliser
   `createIsolatedDialect()` (hors singleton, schémas non enregistrés globalement).
-- `schemaStrategy: 'create'` drop puis recrée ; `'create-drop'` drop à l'arrêt. En prod : `'validate'`.
+- `schemaStrategy: 'create'` drop tout le DB au boot puis recrée. `'create-drop'` (≥ 2.2.9) drop **scoped aux schemas register** au boot ET au shutdown — sécurise les DB partagées entre apps (cf. anomalie #14). En prod : `'validate'`.
 - `softDelete: true` sur un `EntitySchema` :
   - **injecte automatiquement** le champ `deletedAt: Date | null`. Pas besoin de le déclarer.
   - **filtre automatiquement** `findAll` / `findOne` / `findById` / `count` / `search` /

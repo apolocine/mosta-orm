@@ -93,6 +93,16 @@ class SQLiteDialect extends AbstractSqlDialect {
   protected supportsAlterTableAddForeignKey(): boolean { return false; }
 
   /**
+   * SQLite ne supporte pas la syntaxe `DROP TABLE ... CASCADE` (syntax error).
+   * Les FK SQLite sont OFF par défaut et déclarées dans CREATE TABLE — drop
+   * d'une table parent ne casse rien automatiquement, donc CASCADE est inutile.
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §14.
+   */
+  protected getDropTableSql(tableName: string): string {
+    return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)}`;
+  }
+
+  /**
    * SQLite ne supporte pas la syntaxe ANSI `SET TRANSACTION ISOLATION LEVEL`.
    * Mapping des 4 niveaux ANSI vers les 3 modes SQLite (DEFERRED/IMMEDIATE/EXCLUSIVE).
    * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.

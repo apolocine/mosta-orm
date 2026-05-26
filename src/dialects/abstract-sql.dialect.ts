@@ -1266,7 +1266,15 @@ export abstract class AbstractSqlDialect implements IDialect {
       return;
     }
 
-    // strategy: 'update' or 'create'
+    // Hibernate hbm2ddl.auto=create-drop : DROP au boot ET au shutdown.
+    // Sans ce DROP au boot, le seed sur DB partagée trouve les anciennes lignes
+    // et croit que tout est déjà seedé (anomalie #14 — pre-2.2.9).
+    if (strategy === 'create-drop') {
+      this.log('SCHEMA', 'create-drop boot — dropping registered schemas before re-create');
+      await this.dropSchema(schemas);
+    }
+
+    // strategy: 'update' or 'create' (or 'create-drop' après drop)
     for (const schema of schemas) {
       const tableExisted = strategy === 'update'
         ? await this.tableExists(schema.collection)
@@ -2151,9 +2159,18 @@ export abstract class AbstractSqlDialect implements IDialect {
     return truncated;
   }
 
+  /**
+   * SQL string to drop a single table — dialect-specific so subclasses can
+   * adapt the CASCADE keyword (Postgres/MySQL : CASCADE, Oracle : CASCADE
+   * CONSTRAINTS, SQLite : pas de CASCADE supporté du tout).
+   */
+  protected getDropTableSql(tableName: string): string {
+    return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)} CASCADE`;
+  }
+
   /** Drop a single table by name */
   async dropTable(tableName: string): Promise<void> {
-    await this.executeRun(`DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)} CASCADE`, []);
+    await this.executeRun(this.getDropTableSql(tableName), []);
     this.log('DROP_TABLE', tableName);
   }
 
