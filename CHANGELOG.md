@@ -2,6 +2,67 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.2.6] — 2026-05-26
+
+### Anomalie #13 — `getDialect()` singleton créé sans schemas
+
+Découverte au smoke parkmanager (édition client → `MissingSchemaError`
+côté Mongo populate). Cause racine **non triviale** : le singleton
+`getDialect()` est créé au boot Next.js par `@mostajs/auth` (callback
+NextAuth pour résoudre les sessions JWT) **AVANT** que le code applicatif
+n'ait appelé `registerSchemas([…])`. Le `initSchema(getAllSchemas())` au
+premier appel s'exécute donc avec un registry vide → aucun mongoose model
+créé. Quand le code applicatif remplit le registry plus tard, le singleton
+reste cached **sans re-initialisation** — d'où l'erreur au premier `populate`.
+
+**Confirmé Mongo-spécifique** : sur SQLite, la même séquence produit une
+erreur différente (`no such table`), pas `MissingSchemaError`. SQL ne dépend
+pas du registry mongoose.
+
+**Confirmation que ce n'est pas `@mostajs/data-plug`** : `initOrmDialect`
+appelle juste `orm.getDialect()`, le bug est en amont.
+
+#### Fixed
+
+- **`src/core/factory.ts`** :
+  - Lignes 15-26 : ajout `const initializedSchemaNames = new Set<string>()`
+    (tracking des schemas déjà passés à `initSchema` sur le singleton courant)
+  - Lignes 142-159 : `getDialect()` lazy-refresh — quand le singleton existe,
+    calcule `getAllSchemas().filter(s => !initializedSchemaNames.has(s.name))`
+    et appelle `dialect.initSchema(newSchemas)` si non vide. Tracking mis à
+    jour. Idempotent (déjà initialisés → no-op).
+  - Lignes 199-205 : `disconnectDialect()` reset `initializedSchemaNames.clear()`
+    pour permettre une recreation propre.
+
+Comportement amélioré : le singleton reste cohérent avec le registry global
+même si `registerSchemas` est appelé après `getDialect`.
+
+#### Tests
+
+- `test-scripts/singleton-lazy-refresh.test.mjs` :
+  1. `clearRegistry()`, premier `getDialect()` → registry vide → 0 table
+  2. `registerSchemas([UserSchema])` → re-appel `getDialect()` → table `users` créée par lazy refresh
+  3. `registerSchemas([ProjectSchema])` → re-appel → table `projects` créée
+  4. CRUD `BaseRepository` fonctionne
+- 126 tests existants verts → **127/127**
+
+#### Impact API
+
+**Non-breaking**. Aucune signature publique modifiée. Effet secondaire
+potentiel : `initSchema` peut être appelé plusieurs fois sur le même
+dialect au cours d'un process — vérifié idempotent côté Mongo (cache
+`getModel`) et SQL (`CREATE TABLE IF NOT EXISTS`).
+
+#### Rollback
+
+Si régression : `git revert <2.2.6-commit-hash>` puis `npm version 2.2.7`
++ publish. Fix localisé dans 3 zones contiguës de `core/factory.ts`,
+aucun autre fichier touché — revert atomique trivial.
+
+**Auteur** : Dr Hamid MADANI <drmdh@msn.com>
+
+---
+
 ## [2.2.5] — 2026-05-25
 
 ### Anomalie #10 — `sparse: true` silencieusement ignoré (R003B)

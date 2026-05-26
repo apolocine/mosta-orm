@@ -1,8 +1,8 @@
 # @mostajs/orm — fiche LLM
 > ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
 
-- Version: 2.2.5 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
-- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies Lot 3 corrigées (#1-#10 cf. docs/ANOMALIES-LOT3-2026-05-25.md ; scanner intégré scan-silent-bugs.mjs)
+- Version: 2.2.6 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#13 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md ; #13 = singleton getDialect() lazy refresh post-registerSchemas)
 
 ## RÔLE
 Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
@@ -157,6 +157,80 @@ mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/option
   - `{ type: 'addSoftDelete'; entity }` · `{ type: 'removeSoftDelete'; entity }`
   - `{ type: 'addDiscriminator'; entity; field; value }` · `{ type: 'removeDiscriminator'; entity; field }`
 
+## NORMALISATION — `normalizeDoc` / `normalizeDocs`
+
+```ts
+import { normalizeDoc, normalizeDocs, type NormalizedDoc } from '@mostajs/orm'
+```
+
+### Signature
+
+- `normalizeDoc<T>(doc: any): T` — normalise un document brut renvoyé par le dialect.
+- `normalizeDocs<T>(docs: any[]): T[]` — applique `normalizeDoc` sur un tableau.
+
+### Transformations effectuées (3 seulement)
+
+| Source | Cible | Quand |
+|---|---|---|
+| `_id` (Mongo ObjectId) | `id: string` | Toujours. `_id.toString()` via optional chaining → string. Si `_id` absent, `id = doc.id`. |
+| `__v` (mongoose version) | (supprimé) | Toujours. Le champ `__v` (version automatique de mongoose) est retiré du résultat. |
+| Sous-documents populés (récursif) | `_id → id` interne | Récursion sur sous-objets et items d'arrays qui contiennent `_id !== undefined`. |
+
+### Transformations qui ne sont **pas** effectuées par `normalizeDoc`
+
+- **Dates** : pas de conversion `string ISO → Date` (déléguée au dialect — voir bloc « Conversions types SQL »).
+- **JSON / array** : géré côté SQL par `deserializeField` (parse JSON.parse safe) — `normalizeDoc` ne touche pas.
+- **Boolean** : géré côté SQL par `deserializeBoolean` (1/0 → true/false) — `normalizeDoc` ne touche pas.
+- **Soft-delete filter** : géré côté dialect (cf. `applySoftDeleteFilter`).
+- **Validation de schéma** : `normalizeDoc` ne valide rien — fait confiance au dialect.
+
+### Conversions types par dialect
+
+Appliquées par chaque dialect **avant** `normalizeDoc` quand on passe par
+`BaseRepository`. Comportement par `field.type` et par dialect :
+
+| `field.type` | SQLite raw | Postgres / MySQL raw | MongoDB raw | Retour consumer |
+|---|---|---|---|---|
+| `'string'` / `'text'` | TEXT | TEXT / VARCHAR | String | `string` |
+| `'number'` | INT / REAL | INT / FLOAT | Number | `number` |
+| `'boolean'` | INT 0/1 → `true/false` (`deserializeBoolean`) | BOOLEAN driver natif | Boolean | `boolean` |
+| `'date'` | TEXT ISO → ⚠️ **string** (non converti) | TIMESTAMP → **Date** (driver pg/mysql2 natif) | BSON Date → **Date** (mongoose `schemaDef.type = Date` cf. `mongo.dialect.ts:60`) | **dialect-dependent** |
+| `'json'` | TEXT → `JSON.parse` safe (`deserializeField`) | JSONB driver natif → object | Object BSON | `object` |
+| `'array'` | TEXT → `JSON.parse` safe (`deserializeField`, fallback `[]`) | JSONB / ARRAY natif | Array BSON | `array` |
+
+**Piège `date` sur SQLite** : `deserializeField('date', val)` retourne `val`
+tel quel (`abstract-sql.dialect.ts:556`). Sur SQLite, la valeur sortante
+est une `string` ISO 8601 (`"2026-04-01T08:00:00.000Z"`), **pas un `Date`
+object**. Le consumer qui s'attend à `instance? true` doit faire
+`new Date(val)` manuellement OU adopter un dialect qui hydrate nativement
+(Postgres/MySQL/Mongo).
+
+**Piège `date` sur sérialisation HTTP** : si vous passez par `@mostajs/net`
+(mode NET via `@mostajs/data-plug`), `JSON.stringify(date)` produit une
+string ISO et `JSON.parse` côté client retourne la string (comportement
+standard JSON, pas une régression). C'est documenté côté
+`@mostajs/net` — pour préserver l'instance `Date` côté client NET,
+re-hydrater avec `new Date(val)` après réception HTTP.
+
+### Quand appeler `normalizeDoc` manuellement
+
+`BaseRepository` applique **automatiquement** `normalizeDoc` après chaque
+read (`findAll`, `findOne`, `findById`, `findByIdWithRelations`,
+`findWithRelations`, `search`, `create`, `update`, `upsert`, `increment`,
+`addToSet`, `pull`).
+
+Cas d'usage manuel :
+- Résultat de `dialect.executeQuery(rawSQL, params)` (SQL brut, hors repo)
+- Documents Mongo récupérés via mongoose direct (hors `BaseRepository`)
+- Migration de code legacy qui manipule des `_id` Mongo
+
+### Pièges
+
+- `normalizeDoc(null)` / `normalizeDoc(undefined)` → retourne l'input tel quel (no-op).
+- `id` peut être `undefined` si ni `_id` ni `doc.id` ne sont définis (cas d'un objet pré-insert).
+- Sur Mongo, `_id.toString()` produit `"507f1f77bcf86cd799439011"` (24 hex chars). Sur SQL, `id` est déjà une string (UUID ou autoincrement-string).
+- La récursion ne descend que dans les sous-objets contenant `_id`. Un sous-objet métier sans `_id` (par ex. `{ address: { street, city } }`) **n'est pas touché**.
+
 ## ERREURS TYPÉES — QUAND LEVÉES
 - `MostaORMError(message)` — racine de toutes les erreurs ORM (catch générique).
 - `EntityNotFoundError(entityName, id?)` — levée par `update(id, …)` / `delete(id)` quand `id`
@@ -238,6 +312,114 @@ const found = await users.findOne({ email: 'a@b.c' });
   - **R013B-EAGER-WITHOUT-CASCADE** *(warning, fixable)* — flag les relations
     `fetch: 'eager'` sans `onDelete` — orphelins populés silencieusement. Auto-fix
     insère un `onDelete` cohérent ('cascade' si required ou one-to-many, sinon 'set-null').
+
+## PATTERNS RÉVÉLÉS PAR LOT 3 (samples 10-15)
+
+### Relations + FK cascade (sample 10)
+
+```ts
+const ProfileSchema: EntitySchema = {
+  fields: { bio: { type: 'text' }, userId: { type: 'string', required: true, unique: true } },
+  relations: {
+    user: { target: 'User', type: 'one-to-one', joinColumn: 'userId', onDelete: 'cascade', required: true },
+  },
+}
+// Convention : le champ FK (userId) peut coexister avec relation.joinColumn — fix #2 (2.2.0).
+// onDelete:'cascade' génère bien `FOREIGN KEY … ON DELETE CASCADE` y compris sur SQLite (fix #6 2.2.1).
+```
+
+### Lazy vs Eager fetch (sample 11)
+
+```ts
+// Lazy default (2.0+) : findById retourne string id
+const r = await regs.findById(reg.id)
+typeof r.projectId  // 'string'
+
+// Populate explicite
+const populated = await regs.findByIdWithRelations(reg.id, ['project'])
+typeof populated.project  // 'object' — fix #8 (2.2.3) : utilise joinColumn pour lire FK
+
+// Eager opt-in (auto-populate sur findById)
+const eagerSchema = { …, relations: { project: { …, fetch: 'eager' } } }
+
+// Safe comparisons (R019/R021) :
+import { extractRelId } from '@mostajs/orm'
+if (extractRelId(reg.project) === proj.id) { /* match en lazy ET eager */ }
+```
+
+### Migration schema → schema (sample 12)
+
+```ts
+import { diffSchemas, generateMigrationSQL } from '@mostajs/orm'
+const ops = diffSchemas([UserV1], [UserV2])     // DiffOperation[] (14 variantes)
+const sql = generateMigrationSQL(ops)            // ALTER TABLE… / CREATE TABLE…
+
+// Runtime : strategy:'update' migre auto au boot.
+// Fix #9 (2.2.4) : ajoute désormais createdAt/updatedAt/deletedAt/discriminator
+// quand timestamps/softDelete/discriminator sont activés rétroactivement.
+const dialect = await createConnection({ …, schemaStrategy: 'update' }, [UserV2])
+```
+
+### Soft-delete + sparse partial unique (sample 13)
+
+```ts
+const UserSchema: EntitySchema = {
+  fields: { email: { type: 'string', required: true, unique: true } },
+  indexes: [{ fields: { email: 'asc' }, unique: true, sparse: true }],
+  softDelete: true,
+}
+// Fix #10 (2.2.5) : génère CREATE UNIQUE INDEX … WHERE deletedAt IS NULL
+// (partial unique). Réinsertion possible après soft-delete.
+// Bypass filtre auto via :
+const all = await users.findAll({}, { includeDeleted: true })  // fix #1 (2.2.0)
+```
+
+### Pattern audit-by (sample 14)
+
+```ts
+import { DEFAULT_AUDIT_BY_FIELDS } from '@mostajs/orm/validator'
+// 8 champs canoniques :
+// createdBy, updatedBy, deletedBy, archivedBy, validatedBy, scannedBy, reviewedBy, approvedBy
+
+// Pattern wrapper minimal — pas de hook ORM requis :
+function audited(repo) {
+  return {
+    create:     (data, actor) => repo.create({ ...data, createdBy: actor, updatedBy: actor }),
+    update:     (id, data, actor) => repo.update(id, { ...data, updatedBy: actor }),
+    approve:    (id, actor) => repo.update(id, { approvedBy: actor, updatedBy: actor }),
+    softDelete: async (id, actor) => {
+      await repo.update(id, { deletedBy: actor, updatedBy: actor })  // AVANT soft-delete
+      await repo.delete(id)
+    },
+  }
+}
+```
+
+### Transactions avec savepoints (sample 15)
+
+```ts
+// Wrapper $transaction (recommandé) :
+await dialect.$transaction!(async () => {
+  await users.create({ email: 'tx@e.c' })
+  await profile.create({ userId: '…' })
+}, { isolation: 'SERIALIZABLE' })   // mappé par dialect (SQLite/MySQL/Oracle/DB2/HANA) — fix #5 (2.2.0)
+
+// API manuelle avec savepoints :
+const tx = await dialect.beginTx!()
+try {
+  await users.update(id, { active: true })
+  const inner = await dialect.beginTx!()         // SAVEPOINT nested (depth: 2)
+  try { await users.delete(otherId); await dialect.commitTx!(inner); }
+  catch { await dialect.rollbackTx!(inner); }
+  await dialect.commitTx!(tx)
+} catch { await dialect.rollbackTx!(tx); }
+```
+
+### Constantes exportées du validator
+
+- `DEFAULT_SOFT_DELETE_PATTERNS` — patterns détectés par R003 (`deleted: boolean` + `deletedAt: Date`, etc.)
+- `DEFAULT_AUDIT_BY_FIELDS` — 8 champs canoniques (cf. sample 14)
+- `DEFAULT_THRESHOLDS` — seuils par défaut R010 (audit-table absence), R017 (BLOB), etc.
 
 ## RÉFÉRENCES
 - README.md · CHANGELOG.md
