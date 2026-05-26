@@ -47,6 +47,21 @@ function getModel(schema: EntitySchema): Model<any> {
 function buildMongooseSchema(entity: EntitySchema): Schema {
   const definition: Record<string, any> = {};
 
+  // Pré-calcul : noms de fields déjà couverts par un index unique single-field
+  // dans `entity.indexes`. Pour ces fields, on N'EMET PAS `unique:true` côté
+  // schemaDef (sinon mongoose crée 2 fois le même index, ce qui produit
+  // IndexKeySpecsConflict au boot). L'index explicite de `entity.indexes`
+  // (avec ses options sparse, partial, etc.) prend le relais.
+  // Voir docs/ANOMALIES-LOT3-2026-05-25.md §12.
+  const fieldsCoveredByUniqueIndex = new Set<string>();
+  for (const idx of (entity.indexes || [])) {
+    if (!idx.unique) continue;
+    const fieldNames = Object.keys(idx.fields || {});
+    if (fieldNames.length === 1) {
+      fieldsCoveredByUniqueIndex.add(fieldNames[0]);
+    }
+  }
+
   // --- Fields ---
   for (const [name, field] of Object.entries(entity.fields)) {
     const schemaDef: any = {};
@@ -89,7 +104,9 @@ function buildMongooseSchema(entity: EntitySchema): Schema {
     }
 
     if (field.required) schemaDef.required = true;
-    if (field.unique) {
+    if (field.unique && !fieldsCoveredByUniqueIndex.has(name)) {
+      // Skip si déjà couvert par un index unique explicite dans `entity.indexes`
+      // (sinon mongoose lève IndexKeySpecsConflict). Cf. §12.
       schemaDef.unique = true;
       // MongoDB treats null as a value in unique indexes — if the field
       // is not required, auto-enable sparse so multiple nulls are allowed.
