@@ -403,11 +403,19 @@ class MongoDialect implements IDialect {
     const strategy = this.config?.schemaStrategy ?? 'none';
     logQuery('INIT_SCHEMA', `strategy=${strategy}`, { entities: schemas.map(s => s.name) });
 
+    // Anomalie #14 (fix 2.2.9) : create-drop = DROP au boot + DROP au shutdown.
+    // Symétrique du DROP de shutdown ligne 371 — sans ce drop boot, un seed
+    // sur DB partagée trouve les anciennes collections et croit que tout est seedé.
+    if (strategy === 'create-drop') {
+      logQuery('SCHEMA', 'create-drop boot — dropping registered collections before re-create');
+      await this.dropSchema(schemas);
+    }
+
     for (const schema of schemas) {
       // Always register models so .populate() can resolve refs (User→Role→Permission)
       const model = getModel(schema);
 
-      if (strategy === 'update' || strategy === 'create') {
+      if (strategy === 'update' || strategy === 'create' || strategy === 'create-drop') {
         // Ensure indexes exist (like hbm2ddl.auto=update)
         await model.ensureIndexes();
       }
