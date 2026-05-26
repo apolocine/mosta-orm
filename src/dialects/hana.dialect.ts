@@ -80,7 +80,7 @@ class HANADialect extends AbstractSqlDialect {
 
   async dropTable(tableName: string): Promise<void> {
     try {
-      await this.executeRun(`DROP TABLE ${this.quoteIdentifier(tableName)} CASCADE`, []);
+      await this.executeRun(`DROP TABLE ${this.quoteIdentifier(this.getPrefixedName(tableName))} CASCADE`, []);
       this.log('DROP_TABLE', tableName);
     } catch (e) {
       const msg = (e as Error).message ?? '';
@@ -115,7 +115,7 @@ class HANADialect extends AbstractSqlDialect {
   // (default buildLimitOffset from AbstractSqlDialect works)
 
   protected getCreateTablePrefix(tableName: string): string {
-    return `CREATE TABLE ${this.quoteIdentifier(tableName)}`;
+    return `CREATE TABLE ${this.quoteIdentifier(this.getPrefixedName(tableName))}`;
   }
 
   protected getCreateIndexPrefix(indexName: string, unique: boolean): string {

@@ -2,6 +2,88 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.3.0] — 2026-05-26
+
+### Feature — DB_TABLE_PREFIX (préfixe optionnel des tables)
+
+Équivalent Hibernate `physical_naming_strategy`. Permet à plusieurs apps de
+cohabiter sur un même DB partagé sans collisions de noms (`users`, `roles`,
+`permissions`, etc.) — chaque app déclare son préfixe et l'ORM préfixe
+toutes les opérations SQL/Mongo en interne.
+
+### Usage
+
+```bash
+# .env
+DB_TABLE_PREFIX=mp_
+```
+
+ou via API :
+
+```ts
+const dialect = await createConnection(
+  { dialect: 'sqlite', uri: './app.db', tablePrefix: 'mp_' },
+  schemas,
+)
+```
+
+Avec `tablePrefix='mp_'`, le schema `{ name: 'User', collection: 'users' }`
+crée physiquement la table `mp_users`. Les schémas register restent
+portables (l'utilisateur déclare `collection: 'users'` ; le préfixe est
+appliqué en interne au runtime).
+
+### Changements
+
+- `ConnectionConfig.tablePrefix?: string` — nouveau champ.
+- `getConfigFromEnv()` lit `DB_TABLE_PREFIX`.
+- `abstract-sql.dialect.ts` : nouvelle méthode `protected getPrefixedName(name)`
+  appliquée à toutes les opérations SQL physiques (CREATE/DROP/ALTER TABLE,
+  CREATE INDEX, tableExists, FK REFERENCES, junction tables, FROM/INSERT/
+  UPDATE/DELETE).
+- 5 dialect overrides : `oracle.dialect.ts`, `db2.dialect.ts`,
+  `hana.dialect.ts`, `spanner.dialect.ts`, `mongo.dialect.ts` mis à jour.
+- Mongo : `getModel(schema, tablePrefix)` cache par couple `(prefix, name)`
+  + collection physique préfixée via mongoose.model 3e arg.
+
+### Backward-compat
+
+Si `tablePrefix` est `undefined` ou chaîne vide, aucun préfixe — comportement
+strictement identique à 2.2.x.
+
+### Test
+
+- `test-scripts/feature-table-prefix.test.mjs` — Test 1 (avec préfixe) :
+  table physique = `mp_foos`, `foos` non créée. Test 2 (sans préfixe) :
+  comportement backward-compat préservé. **PASS**.
+- Suite : 130/130 tests `node --test` passent.
+
+### Cas d'usage motivant
+
+Sample 16 (`mosta-parkmanager`) sur Oracle DB partagé via tunnel SSH amia.
+Le DB contient 67 tables venant de 4 apps cohabitantes (gym manager,
+turnstile, fd_ora, m2d_ora). Sans préfixe, les tables `users` / `roles` /
+`user_roles` étaient partagées entre apps → RBAC mélangé → menu admin vide.
+Avec `DB_TABLE_PREFIX=mp_`, sample 16 a son namespace dédié sans toucher
+aux autres apps.
+
+### Note spéciale Oracle (et autres dialectes mono-schema)
+
+Sur Oracle, **le schéma SQL est lié au user de connexion** (`devuser` ⇒
+`DEVUSER` schema). Plusieurs apps qui se connectent avec le MÊME user
+Oracle voient le MÊME espace de tables → conflits silencieux sur les noms
+communs (`users`, `roles`, `permissions`, `subscriptions`, etc.). **Il est
+fortement recommandé d'utiliser `DB_TABLE_PREFIX=<app>_`** dès que :
+
+- Le user Oracle est partagé entre plusieurs apps.
+- Le DB Oracle est mutualisé (dev, staging, multi-tenant).
+
+Pattern équivalent en SQL Server et SAP HANA (un user = un schema par
+défaut). Postgres a un système de search_path multi-schema natif et MySQL
+sépare bien par database — moins exposé, mais `DB_TABLE_PREFIX` reste un
+outil sûr de défense en profondeur.
+
+---
+
 ## [2.2.9] — 2026-05-26
 
 ### Anomalie #14 — `schemaStrategy: 'create-drop'` au boot non implémenté (14 dialectes)
