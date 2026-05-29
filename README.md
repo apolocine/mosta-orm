@@ -34,6 +34,7 @@ cd ~/my-app && ./01-quickstart-sqlite.sh            # runnable in 30 seconds
 - 🌉 **Drop-in Prisma replacement.** [`@mostajs/orm-bridge`](https://www.npmjs.com/package/@mostajs/orm-bridge) lets you keep your Prisma code while running on any of 13 databases.
 - 🔁 **Cross-dialect replication built-in.** [`@mostajs/replicator`](https://www.npmjs.com/package/@mostajs/replicator) — CDC + master/slave + failover across SQL ↔ MongoDB.
 - 🧪 **Bundler-friendly.** Tree-shakable ESM, no `eval`, works with esbuild / Vite / Next.js / Bun out of the box.
+- 🏷️ **Multi-app DB cohabitation** *(v2.3.0+)*. `DB_TABLE_PREFIX` à la Hibernate `physical_naming_strategy` — let two apps share one Oracle/MSSQL/HANA DB user without colliding on `users`/`roles`/`permissions`.
 
 ## 60-second demo
 
@@ -60,6 +61,18 @@ const db = await getDialect({ dialect: 'postgres', uri: process.env.DATABASE_URL
 
 That's it. Same `repo.create()`, same `repo.findOne()`, same TypeScript types — different dialect.
 
+Need it to **run in the browser, Bolt.new / StackBlitz or Cloudflare Workers** ? Use the WASM dialect — **boots in the browser / Bolt.new / Cloudflare Workers with no native binary** :
+
+```bash
+npm install @mostajs/orm sql.js
+```
+
+```typescript
+// `sqljs` = SQLite compiled to WebAssembly. No `.node` addon → works where
+// better-sqlite3 can't load (browser, WebContainer, edge). Same API, same SQL.
+const db = await getDialect({ dialect: 'sqljs', uri: ':memory:' }, [UserSchema])
+```
+
 ## How it compares
 
 | | @mostajs/orm | Prisma | Drizzle | TypeORM |
@@ -67,6 +80,7 @@ That's it. Same `repo.create()`, same `repo.findOne()`, same TypeScript types �
 | SQL dialects | **9** *(PG, MySQL, MariaDB, SQLite, MSSQL, Oracle, DB2, HANA, Cockroach…)* | 5 | 5 | 8 |
 | NoSQL dialects | **MongoDB native** | ❌ | ❌ | ❌ |
 | Same API across SQL & NoSQL | ✅ | ❌ | ❌ | ❌ |
+| Browser / WebContainer / edge | ✅ *(WASM `sqljs` — zero native binary)* | ⚠️ *(Accelerate, paid)* | ⚠️ *(driver)* | ❌ |
 | Cross-dialect replication | ✅ *(via [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator))* | ❌ | ❌ | ❌ |
 | Schema-as-code *(no DSL)* | ✅ TypeScript objects | DSL `.prisma` | TS objects | Decorators |
 | Code generation step | ❌ *(zero codegen)* | ✅ required | ❌ | ❌ |
@@ -225,6 +239,22 @@ If `@mostajs/orm` saves you days of glue code, please :
 
 SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · CockroachDB · DB2 · SAP HANA · HSQLDB · Spanner · Sybase
 
+**+ WASM runtime** — the `sqljs` dialect runs SQLite in WebAssembly, so the same ORM **boots in the browser / Bolt.new / Cloudflare Workers with no native binary**. It is not a 14th database — it's a zero-binary runtime of the SQLite engine already listed, for environments where `better-sqlite3` can't load (browser, WebContainer, edge).
+
+### Local-first, offline & embedded
+
+Because the WASM build needs **no native binary and no server**, the same typed API runs on constrained targets that can't compile or ship a native SQLite addon:
+
+- **Local-first / offline / PWA apps with no backend** — a note-taking editor, an offline field tool, an in-browser playground.
+- **Embedded & IoT** — **surveillance and agriculture drones**, **access-control gates and turnstiles**, **smartphones used as access badges**, and any device with a JS/WASM runtime.
+
+> **Marketing angle:** *the only multi-dialect ORM that **runs in the browser** today — with full **browser persistence** (`uri: 'idb://…'`, IndexedDB/OPFS) **on the roadmap**.* A real differentiator vs Prisma/Drizzle, claimed honestly: in-browser execution ships now; durable in-browser storage is a planned opt-in (today, `sqljs` is in-memory in the browser and file-backed on Node).
+
+### Use with AI dev tools
+
+- **Bolt.new · StackBlitz · CodeSandbox** — open a `sqljs` starter by URL (`bolt.new/github.com/apolocine/nextjs-mostajs-orm-starter`); it boots with no native binary.
+- **Cursor · Cline · Claude Code** — first-class schema/migration/validation tooling via the **`@mostajs/orm-mcp`** server *(on the roadmap)*; until then, point them at [`llms.txt`](https://github.com/apolocine/mosta-orm/blob/main/llms.txt) for accurate code generation.
+
 ---
 
 ## Demos
@@ -269,6 +299,7 @@ SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · C
 npm install @mostajs/orm
 # + the driver for your dialect :
 npm install better-sqlite3      # or: pg, mysql2, mongoose, oracledb, mssql, ibm_db, mariadb, @sap/hana-client, @google-cloud/spanner
+npm install sql.js              # browser / Bolt.new / Cloudflare Workers — boots with no native binary (dialect: 'sqljs')
 ```
 
 ## Define a schema
@@ -510,6 +541,50 @@ DB_DIALECT=postgres   SGBD_URI=postgres://...
 DB_DIALECT=mongodb    SGBD_URI=mongodb://...
 # same code in both cases
 ```
+
+## Multi-app DB cohabitation — `DB_TABLE_PREFIX` *(v2.3.0+)*
+
+Hibernate-style `physical_naming_strategy` for `@mostajs/orm`. Lets several
+apps share one physical database without colliding on common names like
+`users`, `roles`, `permissions`, etc. — particularly useful on
+**Oracle / MSSQL / HANA** where the SQL schema is bound to the connection
+user (so two apps using the same DB user otherwise silently share tables).
+
+```bash
+# .env
+DB_TABLE_PREFIX=mp_
+```
+
+```ts
+// or via API
+await createConnection(
+  { dialect: 'oracle', uri: '…', tablePrefix: 'mp_' },
+  schemas,
+)
+```
+
+What gets prefixed at runtime (the developer keeps writing
+`collection: 'users'` everywhere — the prefix lives in the dialect layer) :
+
+- `CREATE / DROP / ALTER TABLE`
+- `CREATE INDEX`
+- `FOREIGN KEY REFERENCES`
+- Junction tables (`RelationDef.through`)
+- `FROM / INSERT / UPDATE / DELETE`
+- Mongo collection physical name (via `mongoose.model(name, schema, prefixed)`)
+
+If `tablePrefix` is `undefined` or empty, behavior is strictly identical to
+2.2.x — fully backward-compatible.
+
+> ℹ️ **Relation name ≠ table name** — `findByIdWithRelations(id, ['roles'])`
+> uses the **logical** relation name declared in `EntitySchema.relations.roles`.
+> The physical join table comes from `RelationDef.through` (e.g.
+> `'user_roles'`) and that name is the one prefixed (→ `mp_user_roles`). No
+> physical table name is hard-coded anywhere in `@mostajs/*` libraries —
+> everything routes through the schemas + the dialect's `getPrefixedName()`.
+
+A runnable showcase of `DB_TABLE_PREFIX` lives in
+[`@mostajs/orm-samples` sample 16 (`mosta-parkmanager`)](https://github.com/apolocine/mosta-orm-samples/tree/main/examples/16-mosta-parkmanager).
 
 ## Subpaths
 

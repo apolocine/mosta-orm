@@ -2,6 +2,51 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.4.0] — 2026-05-29
+
+### Feature — dialecte `sqljs` (SQLite WASM, zéro binaire natif)
+
+Nouveau dialecte `sqljs` : exécute SQLite compilé en WebAssembly via `sql.js`.
+Même API et même SQL généré que le dialecte `sqlite` (il l'étend) — seuls le
+cycle de connexion et l'exécution diffèrent (API WASM au lieu de l'addon natif
+`better-sqlite3`).
+
+**Pourquoi** : `better-sqlite3` est un binaire natif `.node` qui ne charge pas
+dans le navigateur, les WebContainers (StackBlitz / Bolt.new) ni à l'edge
+(Cloudflare Workers / Vercel Edge). `sqljs` est du WASM pur → boote partout.
+C'est le dialecte recommandé pour les starters ouverts dans Bolt.new / Lovable / v0.
+
+> Ce n'est **pas** une 14e base de données : c'est un *runtime* WASM du moteur
+> SQLite déjà supporté. Le compteur reste à 13 bases ; l'axe nouveau est
+> « tourne dans le navigateur / WebContainer / edge ».
+
+### Usage
+
+```bash
+npm i @mostajs/orm sql.js
+```
+
+```ts
+// In-memory (navigateur, WebContainer, edge) — aucun binaire natif
+const db = await createConnection({ dialect: 'sqljs', uri: ':memory:' }, ALL_SCHEMAS)
+
+// Persistance fichier optionnelle en Node : l'image WASM est relue au boot
+// et flushée après chaque écriture + à la déconnexion
+const db = await createConnection({ dialect: 'sqljs', uri: './app.db' }, ALL_SCHEMAS)
+```
+
+Option `options.locateFile` transmise à `initSqlJs` pour les environnements
+qui doivent localiser `sql-wasm.wasm` eux-mêmes (certains bundlers navigateur).
+
+### Détails
+
+- `SQLiteDialect` est désormais exporté (classe de base réutilisée par `sqljs`).
+- `sql.js` ajouté en peerDependency optionnelle (`>=1.8.0`).
+- `createDatabase` / `dropDatabase` gèrent `sqljs` comme la famille SQLite
+  (in-memory → no-op ; fichier → création/suppression sur disque).
+- Tests : `test-scripts/sqljs-wasm.test.mjs` (CRUD in-memory, relations populées,
+  filtres MongoDB-like, soft-delete, persistance fichier avec reconnexion).
+
 ## [2.3.0] — 2026-05-26
 
 ### Feature — DB_TABLE_PREFIX (préfixe optionnel des tables)

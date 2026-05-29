@@ -40,7 +40,7 @@ const SQLITE_TYPE_MAP: Record<string, string> = {
 // SQLiteDialect — normalizer sync → async
 // ============================================================
 
-class SQLiteDialect extends AbstractSqlDialect {
+export class SQLiteDialect extends AbstractSqlDialect {
   readonly dialectType: DialectType = 'sqlite';
   /** Exposed for raw access in tests (same pattern as before refactoring) */
   db: Database.Database | null = null;

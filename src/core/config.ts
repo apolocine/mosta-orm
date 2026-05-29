@@ -64,6 +64,10 @@ export const DIALECT_CONFIGS: Record<DialectType, DialectConfig> = {
     installHint: 'npm install better-sqlite3',
     label: 'SQLite',
   },
+  sqljs: {
+    installHint: 'npm install sql.js',
+    label: 'SQLite (sql.js / WASM — browser, WebContainer, edge)',
+  },
   postgres: {
     installHint: 'npm install pg',
     label: 'PostgreSQL',
