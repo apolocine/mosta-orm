@@ -1,14 +1,17 @@
 # @mostajs/orm — fiche LLM
 > ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
 
-- Version: 2.3.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
-- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers : #14 create-drop boot 14 dialectes (2.2.9), **feature DB_TABLE_PREFIX cohabitation multi-apps (2.3.0)**
+- Version: 2.4.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers : #14 create-drop boot 14 dialectes (2.2.9), **feature DB_TABLE_PREFIX cohabitation multi-apps (2.3.0)**, **dialecte WASM `sqljs` — boote dans le navigateur / WebContainer / edge sans binaire natif (2.4.0)**
 
 ## RÔLE
 Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
 ses entités sous forme d'objets `EntitySchema` (fields, relations, indexes) et obtient
 une API CRUD/query identique quel que soit le SGBD cible : MongoDB, SQLite, PostgreSQL,
 MySQL, MariaDB, Oracle, MSSQL, CockroachDB, DB2, SAP HANA, HSQLDB, Spanner, Sybase.
+Le dialecte `sqljs` exécute SQLite en WebAssembly (zéro binaire natif) : même API et même
+SQL que `sqlite`, mais boote dans le navigateur, les WebContainers (StackBlitz / Bolt.new)
+et l'edge. Ce n'est PAS une 14e base — c'est un runtime WASM du moteur SQLite déjà compté.
 Concepts empruntés à Hibernate/JPA (CascadeType, FetchType, schemaStrategy = hbm2ddl.auto,
 ConnectionConfig = persistence.xml). C'est le module fondation de l'écosystème mostajs.
 
@@ -16,6 +19,10 @@ ConnectionConfig = persistence.xml). C'est le module fondation de l'écosystème
 npm i @mostajs/orm
 (driver natif requis selon dialecte : better-sqlite3, pg, mysql2, mariadb, oracledb,
 mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/optional deps)
+Pour le navigateur / WebContainer / edge : `npm i sql.js` + `{ dialect: 'sqljs', uri: ':memory:' }`
+(WASM pur, aucun binaire natif — c'est le dialecte à utiliser dans Bolt.new / StackBlitz /
+Cloudflare Workers où better-sqlite3 ne charge pas). Persistance fichier optionnelle en Node :
+`uri: './app.db'` (l'image WASM est relue au boot et flushée après chaque écriture).
 
 ## EXPORTS
 - Registre schémas : registerSchema, registerSchemas, getSchema, getSchemaByCollection,
@@ -284,6 +291,7 @@ const found = await users.findOne({ email: 'a@b.c' });
   `createIsolatedDialect()` (hors singleton, schémas non enregistrés globalement).
 - `schemaStrategy: 'create'` drop tout le DB au boot puis recrée. `'create-drop'` (≥ 2.2.9) drop **scoped aux schemas register** au boot ET au shutdown — sécurise les DB partagées entre apps (cf. anomalie #14). En prod : `'validate'`.
 - **Cohabitation multi-apps sur un même DB** (2.3.0) : utiliser `DB_TABLE_PREFIX=<app>_`. Sur Oracle/MSSQL/HANA en particulier, le schéma SQL est lié au user de connexion → si plusieurs apps utilisent le même user, leurs tables `users` / `roles` / `permissions` se mélangent silencieusement. Avec un préfixe, chaque app a son namespace : `users` → `app1_users`, `app2_users`, …
+- **Noms de relations ≠ noms de tables** (clarification 2.3.0) : `findByIdWithRelations(id, ['roles'])` — la string `'roles'` est le nom **logique** de la relation déclarée dans `EntitySchema.relations.roles`. La table physique vient de `RelationDef.through` (ex. `'user_roles'`) — et c'est ce dernier qui est préfixé par `tablePrefix` au runtime (→ `mp_user_roles`). Aucun nom de table SQL/Mongo n'est codé en dur dans les libs `@mostajs/*` : tout passe par les schemas + dialect getPrefixedName().
 - `softDelete: true` sur un `EntitySchema` :
   - **injecte automatiquement** le champ `deletedAt: Date | null`. Pas besoin de le déclarer.
   - **filtre automatiquement** `findAll` / `findOne` / `findById` / `count` / `search` /

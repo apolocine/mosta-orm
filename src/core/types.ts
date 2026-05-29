@@ -240,6 +240,7 @@ export type AggregateStage =
 export type DialectType =
   | 'mongodb'
   | 'sqlite'
+  | 'sqljs'
   | 'postgres'
   | 'mysql'
   | 'mariadb'
