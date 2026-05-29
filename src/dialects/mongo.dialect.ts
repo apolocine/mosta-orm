@@ -2,6 +2,7 @@
 // Equivalent to org.hibernate.dialect.MongoDBDialect
 // Author: Dr Hamid MADANI drmdh@msn.com
 import mongoose, { Schema, Model, type ConnectOptions } from 'mongoose';
+import { normalizeIndexFields } from '../core/types.js';
 import type {
   IDialect,
   DialectType,
@@ -71,7 +72,7 @@ function buildMongooseSchema(entity: EntitySchema): Schema {
   const fieldsCoveredByUniqueIndex = new Set<string>();
   for (const idx of (entity.indexes || [])) {
     if (!idx.unique) continue;
-    const fieldNames = Object.keys(idx.fields || {});
+    const fieldNames = Object.keys(normalizeIndexFields(idx.fields));
     if (fieldNames.length === 1) {
       fieldsCoveredByUniqueIndex.add(fieldNames[0]);
     }
@@ -178,7 +179,7 @@ function buildMongooseSchema(entity: EntitySchema): Schema {
   // --- Indexes ---
   for (const idx of entity.indexes) {
     const mongoIndex: Record<string, any> = {};
-    for (const [field, dir] of Object.entries(idx.fields)) {
+    for (const [field, dir] of Object.entries(normalizeIndexFields(idx.fields))) {
       if (dir === 'text') mongoIndex[field] = 'text';
       else if (dir === 'desc') mongoIndex[field] = -1;
       else mongoIndex[field] = 1;

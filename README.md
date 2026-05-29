@@ -239,7 +239,12 @@ If `@mostajs/orm` saves you days of glue code, please :
 
 SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · CockroachDB · DB2 · SAP HANA · HSQLDB · Spanner · Sybase
 
-**+ WASM runtime** — the `sqljs` dialect runs SQLite in WebAssembly, so the same ORM **boots in the browser / Bolt.new / Cloudflare Workers with no native binary**. It is not a 14th database — it's a zero-binary runtime of the SQLite engine already listed, for environments where `better-sqlite3` can't load (browser, WebContainer, edge).
+**+ WASM runtimes** — two zero-binary dialects run in WebAssembly, so the same ORM **boots in the browser / Bolt.new / Cloudflare Workers with no native binary**:
+
+- **`sqljs`** — SQLite in WASM (via `sql.js`). In-memory in the browser; file-backed on Node.
+- **`pglite`** — PostgreSQL in WASM (via `@electric-sql/pglite`). In-memory, **`idb://` for durable in-browser storage (IndexedDB)**, or a directory on Node.
+
+These are **not** new databases — they're zero-binary WASM runtimes of the SQLite/Postgres engines already listed, for environments where `better-sqlite3` / `pg` can't load.
 
 ### Local-first, offline & embedded
 
@@ -248,7 +253,7 @@ Because the WASM build needs **no native binary and no server**, the same typed 
 - **Local-first / offline / PWA apps with no backend** — a note-taking editor, an offline field tool, an in-browser playground.
 - **Embedded & IoT** — **surveillance and agriculture drones**, **access-control gates and turnstiles**, **smartphones used as access badges**, and any device with a JS/WASM runtime.
 
-> **Marketing angle:** *the only multi-dialect ORM that **runs in the browser** today — with full **browser persistence** (`uri: 'idb://…'`, IndexedDB/OPFS) **on the roadmap**.* A real differentiator vs Prisma/Drizzle, claimed honestly: in-browser execution ships now; durable in-browser storage is a planned opt-in (today, `sqljs` is in-memory in the browser and file-backed on Node).
+> **Marketing angle:** *the only multi-dialect ORM that **runs in the browser** — and **persists there** (`pglite` with `uri: 'idb://…'`, IndexedDB) — today.* A real differentiator vs Prisma/Drizzle, claimed honestly: in-browser execution + durable storage ship now via `pglite`; for `sqljs`, browser persistence (IndexedDB/OPFS) is a planned opt-in (today it is in-memory in the browser, file-backed on Node).
 
 ### Use with AI dev tools
 
@@ -299,7 +304,8 @@ Because the WASM build needs **no native binary and no server**, the same typed 
 npm install @mostajs/orm
 # + the driver for your dialect :
 npm install better-sqlite3      # or: pg, mysql2, mongoose, oracledb, mssql, ibm_db, mariadb, @sap/hana-client, @google-cloud/spanner
-npm install sql.js              # browser / Bolt.new / Cloudflare Workers — boots with no native binary (dialect: 'sqljs')
+npm install sql.js              # SQLite in the browser / Bolt.new / Workers — no native binary (dialect: 'sqljs')
+npm install @electric-sql/pglite # PostgreSQL in the browser — idb:// persistence (dialect: 'pglite')
 ```
 
 ## Define a schema
