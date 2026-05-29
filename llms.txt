@@ -1,17 +1,20 @@
 # @mostajs/orm — fiche LLM
 > ORM multi-dialecte inspiré d'Hibernate — une seule API, 13 bases de données, zéro lock-in.
 
-- Version: 2.4.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
-- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers : #14 create-drop boot 14 dialectes (2.2.9), **feature DB_TABLE_PREFIX cohabitation multi-apps (2.3.0)**, **dialecte WASM `sqljs` — boote dans le navigateur / WebContainer / edge sans binaire natif (2.4.0)**
+- Version: 2.5.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 + #17 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers : **dialecte WASM `sqljs` (SQLite, 2.4.0)** + **dialecte WASM `pglite` (PostgreSQL, idb:// persistance navigateur, 2.5.0)** — bootent navigateur/WebContainer/edge sans binaire natif ; **fix #17 : `index.fields` en tableau produisait une colonne `"0"` (silent SQLite, crash Postgres/PGlite) → normalisé (2.5.0)**
 
 ## RÔLE
 Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
 ses entités sous forme d'objets `EntitySchema` (fields, relations, indexes) et obtient
 une API CRUD/query identique quel que soit le SGBD cible : MongoDB, SQLite, PostgreSQL,
 MySQL, MariaDB, Oracle, MSSQL, CockroachDB, DB2, SAP HANA, HSQLDB, Spanner, Sybase.
-Le dialecte `sqljs` exécute SQLite en WebAssembly (zéro binaire natif) : même API et même
-SQL que `sqlite`, mais boote dans le navigateur, les WebContainers (StackBlitz / Bolt.new)
-et l'edge. Ce n'est PAS une 14e base — c'est un runtime WASM du moteur SQLite déjà compté.
+Deux dialectes WASM (zéro binaire natif) bootent dans le navigateur, les WebContainers
+(StackBlitz / Bolt.new) et l'edge — même API/SQL que leur moteur respectif :
+`sqljs` (SQLite WASM, via sql.js) et `pglite` (PostgreSQL WASM, via @electric-sql/pglite ;
+gère nativement `uri: 'idb://nom'` → persistance navigateur durable en IndexedDB).
+Ce ne sont PAS de nouvelles bases — ce sont des runtimes WASM des moteurs SQLite/Postgres
+déjà comptés.
 Concepts empruntés à Hibernate/JPA (CascadeType, FetchType, schemaStrategy = hbm2ddl.auto,
 ConnectionConfig = persistence.xml). C'est le module fondation de l'écosystème mostajs.
 
@@ -19,10 +22,12 @@ ConnectionConfig = persistence.xml). C'est le module fondation de l'écosystème
 npm i @mostajs/orm
 (driver natif requis selon dialecte : better-sqlite3, pg, mysql2, mariadb, oracledb,
 mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, mongoose — peer/optional deps)
-Pour le navigateur / WebContainer / edge : `npm i sql.js` + `{ dialect: 'sqljs', uri: ':memory:' }`
-(WASM pur, aucun binaire natif — c'est le dialecte à utiliser dans Bolt.new / StackBlitz /
-Cloudflare Workers où better-sqlite3 ne charge pas). Persistance fichier optionnelle en Node :
-`uri: './app.db'` (l'image WASM est relue au boot et flushée après chaque écriture).
+Pour le navigateur / WebContainer / edge (WASM pur, aucun binaire natif — à utiliser dans
+Bolt.new / StackBlitz / Cloudflare Workers où better-sqlite3/pg ne chargent pas) :
+- SQLite : `npm i sql.js` + `{ dialect: 'sqljs', uri: ':memory:' }` ; persistance fichier
+  optionnelle en Node `uri: './app.db'` (image WASM relue au boot, flushée après chaque write).
+- PostgreSQL : `npm i @electric-sql/pglite` + `{ dialect: 'pglite', uri: ':memory:' }` ;
+  `uri: 'idb://app'` = persistance navigateur (IndexedDB), `uri: './pgdata'` = dossier Node.
 
 ## EXPORTS
 - Registre schémas : registerSchema, registerSchemas, getSchema, getSchemaByCollection,
