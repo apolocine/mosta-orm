@@ -29,6 +29,7 @@ const initializedSchemaNames = new Set<string>();
 const DIALECT_FILE: Record<DialectType, string> = {
   mongodb:     'mongo.dialect.js',
   sqlite:      'sqlite.dialect.js',
+  sqljs:       'sqljs.dialect.js',
   postgres:    'postgres.dialect.js',
   mysql:       'mysql.dialect.js',
   mariadb:     'mariadb.dialect.js',
@@ -400,11 +401,12 @@ export async function dropDatabase(
   uri: string,
   dbName: string,
 ): Promise<{ ok: boolean; detail?: string; error?: string }> {
-  if (dialect === 'sqlite') {
-    if (uri === ':memory:') return { ok: true, detail: 'SQLite :memory: — nothing to drop' };
+  if (dialect === 'sqlite' || dialect === 'sqljs') {
+    // sqljs in-memory (or :memory:) — nothing on disk to drop.
+    if (uri === ':memory:' || !uri) return { ok: true, detail: `${dialect} :memory: — nothing to drop` };
     try {
       const { unlinkSync, existsSync } = await import('fs');
-      // SQLite WAL files
+      // SQLite WAL files (sqljs writes a single .db snapshot, the suffixes are harmless no-ops)
       for (const suffix of ['', '-wal', '-shm', '-journal']) {
         const f = uri + suffix;
         if (existsSync(f)) unlinkSync(f);
@@ -496,8 +498,8 @@ export async function createDatabase(
   if (dialect === 'mongodb') {
     return { ok: true, detail: 'MongoDB: auto-created on first write' };
   }
-  if (dialect === 'sqlite') {
-    return { ok: true, detail: 'SQLite: file auto-created' };
+  if (dialect === 'sqlite' || dialect === 'sqljs') {
+    return { ok: true, detail: `${dialect}: file auto-created` };
   }
   if (dialect === 'oracle') {
     return { ok: true, detail: 'Oracle: tables are created in the connected user schema (PDB service)' };

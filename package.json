@@ -1,7 +1,7 @@
 {
   "name": "@mostajs/orm",
-  "version": "2.3.0",
-  "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in",
+  "version": "2.4.0",
+  "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in, runs in the browser/WebContainer via WASM",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -60,7 +60,12 @@
     "hibernate",
     "repository-pattern",
     "multi-dialect",
-    "typescript"
+    "typescript",
+    "sql.js",
+    "wasm",
+    "webcontainer",
+    "browser",
+    "edge"
   ],
   "repository": {
     "type": "git",
@@ -89,7 +94,8 @@
     "@sap/hana-client": ">=2.0.0",
     "better-sqlite3": ">=9.0.0",
     "mongoose": ">=7.0.0",
-    "mysql2": ">=3.0.0"
+    "mysql2": ">=3.0.0",
+    "sql.js": ">=1.8.0"
   },
   "peerDependenciesMeta": {
     "mongoose": {
@@ -126,10 +132,9 @@
   "devDependencies": {
     "@mostajs/socle": "^2.0.0",
     "@types/better-sqlite3": "^7.6.0",
-    "@types/pg": "^8.0.0",
-    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.6.2",
     "mongoose": "^8.0.0",
+    "sql.js": "^1.14.1",
     "typescript": "^5.6.0"
   },
   "optionalDependencies": {
