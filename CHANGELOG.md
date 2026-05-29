@@ -2,6 +2,54 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.5.0] — 2026-05-29
+
+### Feature — dialecte `pglite` (PostgreSQL WASM, zéro binaire natif)
+
+Nouveau dialecte `pglite` : PostgreSQL compilé en WebAssembly via
+`@electric-sql/pglite`. Étend `PostgresDialect` (même SQL : `$n`, `ILIKE`,
+`RETURNING`, `JSONB`, `TIMESTAMPTZ`, `CASCADE`…) — seuls le cycle de connexion
+et l'exécution diffèrent (PGlite embarqué au lieu du pool réseau `pg`).
+
+**Pourquoi** : comme `sqljs` pour SQLite, mais côté **Postgres** — boote dans le
+navigateur, les WebContainers (Bolt.new/StackBlitz) et l'edge, sans driver natif.
+PGlite est une connexion embarquée unique → **idéal pour la correction
+transactionnelle** (zéro race de pool).
+
+**Bonus** : PGlite gère nativement `uri: 'idb://<nom>'` → **persistance navigateur
+durable** (IndexedDB) sans code maison (l'item E1 de la roadmap, gratuit côté
+Postgres).
+
+```ts
+await createConnection({ dialect: 'pglite', uri: ':memory:' }, SCHEMAS)   // edge/browser
+await createConnection({ dialect: 'pglite', uri: 'idb://app' }, SCHEMAS)  // browser persistant
+await createConnection({ dialect: 'pglite', uri: './pgdata' }, SCHEMAS)   // Node (dossier)
+```
+
+> Ce n'est **pas** une 14e base : runtime WASM du moteur PostgreSQL déjà supporté.
+
+### Fix — Anomalie #17 : `index.fields` en tableau produisait une colonne `"0"`
+
+Un index déclaré en **forme tableau** `{ fields: ['email'] }` (la forme que les
+IA génèrent spontanément) produisait `CREATE INDEX … ("0")` :
+silencieusement toléré par SQLite (double-quote → littéral), **fatal sur
+PostgreSQL/PGlite** (`column "0" does not exist`, 42703).
+
+- `IndexDef.fields` élargi à `Record<string, IndexType> | string[]` (non-breaking).
+- Helper `normalizeIndexFields()` (core/types) ; appliqué dans `generateIndexes`
+  (SQL) + les 2 sites mongo.
+- Détails : `docs/ANOMALIES-LOT3-2026-05-25.md` §17.
+
+### Détails
+
+- `src/dialects/pglite.dialect.ts` (nouveau) ; `PostgresDialect` déjà exporté.
+- Enregistré dans `DialectType`, `DIALECT_FILE`, `DIALECT_CONFIGS`.
+- `createDatabase`/`dropDatabase` gèrent pglite (embarqué : memory/idb/dossier).
+- `@electric-sql/pglite` en peerDependency optionnelle (>=0.2.0) ; `sql.js`
+  également passé en peer **optionnel** (correctif d'oubli 2.4.0).
+- Tests : `test-scripts/pglite-wasm.test.mjs` (CRUD, relations, filtres,
+  soft-delete, persistance fichier + reconnexion).
+
 ## [2.4.0] — 2026-05-29
 
 ### Feature — dialecte `sqljs` (SQLite WASM, zéro binaire natif)

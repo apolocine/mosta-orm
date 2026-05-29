@@ -31,6 +31,7 @@ const DIALECT_FILE: Record<DialectType, string> = {
   sqlite:      'sqlite.dialect.js',
   sqljs:       'sqljs.dialect.js',
   postgres:    'postgres.dialect.js',
+  pglite:      'pglite.dialect.js',
   mysql:       'mysql.dialect.js',
   mariadb:     'mariadb.dialect.js',
   oracle:      'oracle.dialect.js',
@@ -416,6 +417,12 @@ export async function dropDatabase(
       return { ok: false, error: e.message };
     }
   }
+  if (dialect === 'pglite') {
+    // Embedded Postgres-in-WASM : memory:// / idb:// → rien à supprimer côté
+    // serveur ; persistance fichier = un répertoire (suppression manuelle, on
+    // n'auto-rm pas un dossier pour éviter toute perte accidentelle).
+    return { ok: true, detail: 'pglite: embedded — remove the data dir manually (memory:// / idb:// : nothing to drop)' };
+  }
   if (dialect === 'mongodb') {
     try {
       const mod = await loadDialectModule(dialect);
@@ -500,6 +507,9 @@ export async function createDatabase(
   }
   if (dialect === 'sqlite' || dialect === 'sqljs') {
     return { ok: true, detail: `${dialect}: file auto-created` };
+  }
+  if (dialect === 'pglite') {
+    return { ok: true, detail: 'pglite: embedded data dir auto-created (memory:// / idb:// / path)' };
   }
   if (dialect === 'oracle') {
     return { ok: true, detail: 'Oracle: tables are created in the connected user schema (PDB service)' };

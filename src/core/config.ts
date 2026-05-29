@@ -72,6 +72,10 @@ export const DIALECT_CONFIGS: Record<DialectType, DialectConfig> = {
     installHint: 'npm install pg',
     label: 'PostgreSQL',
   },
+  pglite: {
+    installHint: 'npm install @electric-sql/pglite',
+    label: 'PostgreSQL (PGlite / WASM — browser, WebContainer, edge, idb:// persistence)',
+  },
   mysql: {
     installHint: 'npm install mysql2',
     label: 'MySQL',

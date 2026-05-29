@@ -5,6 +5,7 @@
 // Author: Dr Hamid MADANI drmdh@msn.com
 
 import { randomUUID } from 'crypto';
+import { normalizeIndexFields } from '../core/types.js';
 import type {
   IDialect,
   DialectType,
@@ -1004,7 +1005,14 @@ export abstract class AbstractSqlDialect implements IDialect {
     // `indexes` is an optional field in EntitySchema — guard against schemas
     // that simply omit it (e.g. minimal payloads received via
     // POST /api/upload-schemas-json).
-    const indexes = schema.indexes ?? [];
+    // Normalize each index's `fields` to the canonical object form up-front so
+    // the array shorthand (['email']) and the auto-partial block below both see
+    // a stable {col: dir} shape. Without this, Object.entries(['email']) yields
+    // a column named "0" (silent on SQLite, fatal on Postgres/PGlite). §17.
+    const indexes = (schema.indexes ?? []).map(idx => ({
+      ...idx,
+      fields: normalizeIndexFields(idx.fields),
+    }));
 
     for (let i = 0; i < indexes.length; i++) {
       const idx = indexes[i];
