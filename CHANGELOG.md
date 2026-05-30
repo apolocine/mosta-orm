@@ -2,6 +2,22 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.5.2] — 2026-05-30
+
+### Fix — dialect loading failed in WebContainers (StackBlitz / Bolt.new)
+
+The dialect loader used `import()` of an **absolute `file://` URL** (built via an
+`eval`'d importer to dodge bundlers). That works on Node and *some* WebContainer
+builds, but **fails on StackBlitz's WebContainer** (`error loading dynamically
+imported module: file:///…/sqljs.dialect.js`) — which broke every WASM-first
+starter (`sqljs` / `pglite`) at the first query.
+
+**Fix** : replaced the `file://` importer with a static map of **relative**
+specifiers (`import('../dialects/<x>.dialect.js')`), still carrying
+`webpackIgnore` / `@vite-ignore` so bundlers don't trace unused drivers. Relative
+specifiers resolve in every runtime, including WebContainers. No API change; only
+the dialect actually requested is loaded (unchanged behaviour).
+
 ## [2.5.1] — 2026-05-30
 
 ### Fix — `optionalDependencies` (drivers) cassaient les installs WebContainer
