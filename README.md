@@ -73,6 +73,19 @@ npm install @mostajs/orm sql.js
 const db = await getDialect({ dialect: 'sqljs', uri: ':memory:' }, [UserSchema])
 ```
 
+## Starters — open in Bolt.new
+
+Spin up a ready-to-run **blog** (Users · Posts · Comments, with relations, soft-delete & seeded demo data) right in your browser — **no native binary, boots on the first try** via the `sqljs` (SQLite WASM) dialect:
+
+| Starter | Open in Bolt.new |
+|---|---|
+| **Next.js 15** (App Router) | [![Bolt](https://img.shields.io/badge/Open_in-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/nextjs-mostajs-orm-starter) |
+| **Express** | [![Bolt](https://img.shields.io/badge/Open_in-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/express-mostajs-orm-starter) |
+| **Fastify** | [![Bolt](https://img.shields.io/badge/Open_in-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/fastify-mostajs-orm-starter) |
+| **Hono** (Node / edge) | [![Bolt](https://img.shields.io/badge/Open_in-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/hono-mostajs-orm-starter) |
+
+Working from an **AI dev tool** (Cursor, Cline, Claude…)? Generate schemas, lint them (24 rules) and produce migrations via the MCP server **[@mostajs/orm-mcp](https://www.npmjs.com/package/@mostajs/orm-mcp)** — hosted at `https://orm-mcp.amia.fr/mcp`.
+
 ## How it compares
 
 | | @mostajs/orm | Prisma | Drizzle | TypeORM |
