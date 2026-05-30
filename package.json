@@ -1,6 +1,6 @@
 {
   "name": "@mostajs/orm",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in, runs in the browser/WebContainer via WASM (SQLite & Postgres)",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
   "license": "AGPL-3.0-or-later",
@@ -96,8 +96,13 @@
     "@mostajs/socle": ">=2.0.0",
     "@sap/hana-client": ">=2.0.0",
     "better-sqlite3": ">=9.0.0",
+    "ibm_db": ">=3.0.0",
+    "mariadb": ">=3.0.0",
     "mongoose": ">=7.0.0",
+    "mssql": ">=10.0.0",
     "mysql2": ">=3.0.0",
+    "oracledb": ">=6.0.0",
+    "pg": ">=8.0.0",
     "sql.js": ">=1.8.0"
   },
   "peerDependenciesMeta": {
@@ -146,13 +151,6 @@
     "mongoose": "^8.0.0",
     "sql.js": "^1.14.1",
     "typescript": "^5.6.0"
-  },
-  "optionalDependencies": {
-    "ibm_db": "^4.0.0",
-    "mariadb": "^3.5.2",
-    "mssql": "^12.2.1",
-    "oracledb": "^6.10.0",
-    "pg": "^8.20.0"
   },
   "funding": {
     "type": "github",
