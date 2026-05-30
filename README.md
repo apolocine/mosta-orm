@@ -73,16 +73,24 @@ npm install @mostajs/orm sql.js
 const db = await getDialect({ dialect: 'sqljs', uri: ':memory:' }, [UserSchema])
 ```
 
-## Starters — open in Bolt.new
+## Starters — open in your browser
 
-Spin up a ready-to-run **blog** (Users · Posts · Comments, with relations, soft-delete & seeded demo data) right in your browser — **no native binary, boots on the first try** via the `sqljs` (SQLite WASM) dialect:
+All boot **in your browser with no native binary**, on the first try, via the `sqljs` (SQLite WASM) dialect.
 
-| Starter | Open in Bolt.new |
-|---|---|
-| **Next.js 15** (App Router) | [![Bolt](https://img.shields.io/badge/Open_in-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/nextjs-mostajs-orm-starter) |
-| **Express** | [![Bolt](https://img.shields.io/badge/Open_in-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/express-mostajs-orm-starter) |
-| **Fastify** | [![Bolt](https://img.shields.io/badge/Open_in-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/fastify-mostajs-orm-starter) |
-| **Hono** (Node / edge) | [![Bolt](https://img.shields.io/badge/Open_in-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/hono-mostajs-orm-starter) |
+**🚀 Startup MVP starter** — a full foundation (**landing + auth + CRUD dashboard**, "rename & go") to launch a SaaS:
+
+[![Open in StackBlitz](https://img.shields.io/badge/Open_in-StackBlitz-1389FD?style=for-the-badge&logo=stackblitz)](https://stackblitz.com/github/apolocine/mostajs-saas-starter) [![Open in Bolt.new](https://img.shields.io/badge/Open_in-Bolt.new-000?style=for-the-badge&logo=stackblitz)](https://bolt.new/github.com/apolocine/mostajs-saas-starter)
+
+Or a minimal **blog** (Users · Posts · Comments — relations, soft-delete, seeded data) across four frameworks:
+
+| Starter | StackBlitz | Bolt.new |
+|---|---|---|
+| **Next.js 15** (App Router) | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/nextjs-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/nextjs-mostajs-orm-starter) |
+| **Express** | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/express-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/express-mostajs-orm-starter) |
+| **Fastify** | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/fastify-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/fastify-mostajs-orm-starter) |
+| **Hono** (Node / edge) | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/hono-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/hono-mostajs-orm-starter) |
+
+> 💡 Prefer **StackBlitz** to debug — its terminal shows install/build logs and errors clearly.
 
 Working from an **AI dev tool** (Cursor, Cline, Claude…)? Generate schemas, lint them (24 rules) and produce migrations via the MCP server **[@mostajs/orm-mcp](https://www.npmjs.com/package/@mostajs/orm-mcp)** — hosted at `https://orm-mcp.amia.fr/mcp`.
 
