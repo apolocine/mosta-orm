@@ -25,55 +25,45 @@ let currentConfig: ConnectionConfig | null = null;
  */
 const initializedSchemaNames = new Set<string>();
 
-/** Whitelist of supported dialect module filenames (prevents arbitrary require). */
-const DIALECT_FILE: Record<DialectType, string> = {
-  mongodb:     'mongo.dialect.js',
-  sqlite:      'sqlite.dialect.js',
-  sqljs:       'sqljs.dialect.js',
-  postgres:    'postgres.dialect.js',
-  pglite:      'pglite.dialect.js',
-  mysql:       'mysql.dialect.js',
-  mariadb:     'mariadb.dialect.js',
-  oracle:      'oracle.dialect.js',
-  mssql:       'mssql.dialect.js',
-  cockroachdb: 'cockroachdb.dialect.js',
-  db2:         'db2.dialect.js',
-  hana:        'hana.dialect.js',
-  hsqldb:      'hsqldb.dialect.js',
-  spanner:     'spanner.dialect.js',
-  sybase:      'sybase.dialect.js',
+/**
+ * Per-dialect lazy loaders. Each uses a STATIC *relative* specifier so the
+ * module loader resolves it correctly in every runtime — including
+ * WebContainers (StackBlitz / Bolt.new), where a dynamic `import()` of an
+ * absolute `file://` URL fails (it worked only on Node and some WebContainer
+ * builds). The `webpackIgnore` / `@vite-ignore` pragmas keep bundlers from
+ * tracing every dialect driver (mongoose, pg, oracledb…) into the graph: only
+ * the dialect actually requested at runtime is loaded.
+ */
+const DIALECT_LOADERS: Record<DialectType, () => Promise<{ createDialect: () => IDialect }>> = {
+  mongodb:     () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/mongo.dialect.js'),
+  sqlite:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sqlite.dialect.js'),
+  sqljs:       () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sqljs.dialect.js'),
+  postgres:    () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/postgres.dialect.js'),
+  pglite:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/pglite.dialect.js'),
+  mysql:       () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/mysql.dialect.js'),
+  mariadb:     () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/mariadb.dialect.js'),
+  oracle:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/oracle.dialect.js'),
+  mssql:       () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/mssql.dialect.js'),
+  cockroachdb: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/cockroachdb.dialect.js'),
+  db2:         () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/db2.dialect.js'),
+  hana:        () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/hana.dialect.js'),
+  hsqldb:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/hsqldb.dialect.js'),
+  spanner:     () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/spanner.dialect.js'),
+  sybase:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sybase.dialect.js'),
 };
 
 /**
- * Opaque dynamic importer — hides the specifier from webpack / Vite / Rollup
- * static analysis so downstream bundlers (Next.js client build, Vite SSR, etc.)
- * do NOT trace every dialect driver (mongoose, better-sqlite3, pg, oracledb…)
- * into the dependency graph. Only the dialect actually requested at runtime is
- * loaded. Node.js resolves the absolute file:// URL at runtime.
- *
- * The `/* webpackIgnore * /` and `/* @vite-ignore * /` pragmas are belt-and-
- * braces for when consumers DO bundle @mostajs/orm (i.e. not externalized).
- * The template-literal specifier alone is enough to defeat most analyzers ;
- * the pragmas cover the rest.
- */
-const _import: (url: string) => Promise<any> =
-  (0, eval)('(u) => import(/* webpackIgnore: true */ /* @vite-ignore */ u)');
-
-/**
  * Dynamically load a dialect adapter module.
- * Only the selected dialect is loaded — no unused drivers in memory, and
- * no static edge in the bundler graph.
+ * Only the selected dialect is loaded — no unused drivers in memory.
  */
 async function loadDialectModule(dialect: DialectType): Promise<{ createDialect: () => IDialect }> {
-  const file = DIALECT_FILE[dialect];
-  if (!file) {
+  const loader = DIALECT_LOADERS[dialect];
+  if (!loader) {
     throw new Error(
       `No loader for dialect "${dialect}". Supported: ${getSupportedDialects().join(', ')}`
     );
   }
-  const here = dirname(fileURLToPath(import.meta.url));
-  const abs  = pathToFileURL(pathResolve(here, '..', 'dialects', file)).href;
-  return _import(abs);
+  return loader();
 }
 
 /**
