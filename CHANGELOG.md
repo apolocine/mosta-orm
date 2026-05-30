@@ -2,6 +2,26 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.5.1] — 2026-05-30
+
+### Fix — `optionalDependencies` (drivers) cassaient les installs WebContainer
+
+`pg`, `mariadb`, `mssql`, `oracledb`, `ibm_db` étaient déclarés en
+**`optionalDependencies`** → npm les **installait automatiquement chez TOUS les
+consommateurs**. `ibm_db` et `oracledb` sont **natifs** (`node-gyp`) → leur build
+**échoue dans les WebContainers** (Bolt.new / StackBlitz) et alourdit chaque
+install.
+
+**Correctif** : suppression du bloc `optionalDependencies`. Ces drivers sont
+désormais déclarés uniquement en **peerDependencies optionnelles** (ils l'étaient
+déjà dans `peerDependenciesMeta`) → **npm ne les installe plus automatiquement**.
+Le consommateur installe explicitement celui dont il a besoin (`npm install pg`,
+etc.) ; à défaut, `connect()` lève déjà une erreur claire avec la commande
+d'installation. Aucune API publique modifiée.
+
+**Impact** : installs plus légères, et surtout les projets WASM-first
+(`sqljs` / `pglite`) bootent dans Bolt.new/WebContainer sans build natif.
+
 ## [2.5.0] — 2026-05-29
 
 ### Feature — dialecte `pglite` (PostgreSQL WASM, zéro binaire natif)
