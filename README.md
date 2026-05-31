@@ -77,18 +77,22 @@ const db = await getDialect({ dialect: 'sqljs', uri: ':memory:' }, [UserSchema])
 
 All boot **in your browser with no native binary**, on the first try, via the `sqljs` (SQLite WASM) dialect.
 
-**🚀 Startup MVP starter** — a full foundation (**landing + auth + CRUD dashboard**, "rename & go") to launch a SaaS:
+**🚀 Startup MVP starter** — a full foundation (**landing + auth + CRUD dashboard**, "rename & go") to launch a SaaS. Auth is powered by **[@mostajs/auth-lite](https://www.npmjs.com/package/@mostajs/auth-lite)** (email/password + sessions, no native addon):
 
-[![Open in StackBlitz](https://img.shields.io/badge/Open_in-StackBlitz-1389FD?style=for-the-badge&logo=stackblitz)](https://stackblitz.com/github/apolocine/mostajs-saas-starter) [![Open in Bolt.new](https://img.shields.io/badge/Open_in-Bolt.new-000?style=for-the-badge&logo=stackblitz)](https://bolt.new/github.com/apolocine/mostajs-saas-starter)
+[![Open in StackBlitz](https://img.shields.io/badge/Open_in-StackBlitz-1389FD?style=for-the-badge&logo=stackblitz)](https://stackblitz.com/github/apolocine/mostajs-saas-starter) [![Open in Bolt.new](https://img.shields.io/badge/Open_in-Bolt.new-000?style=for-the-badge&logo=stackblitz)](https://bolt.new/github.com/apolocine/mostajs-saas-starter) [![Open in CodeSandbox](https://img.shields.io/badge/Open_in-CodeSandbox-151515?style=for-the-badge&logo=codesandbox)](https://codesandbox.io/p/github/apolocine/mostajs-saas-starter)
+
+**📊 Survey starter** — a customer-satisfaction survey (Next.js 15): landing, 5-question form, thank-you page & admin dashboard with bar charts. Rename & go:
+
+[![Open in StackBlitz](https://img.shields.io/badge/Open_in-StackBlitz-1389FD?style=for-the-badge&logo=stackblitz)](https://stackblitz.com/github/apolocine/mostajs-survey-starter) [![Open in Bolt.new](https://img.shields.io/badge/Open_in-Bolt.new-000?style=for-the-badge&logo=stackblitz)](https://bolt.new/github.com/apolocine/mostajs-survey-starter) [![Open in CodeSandbox](https://img.shields.io/badge/Open_in-CodeSandbox-151515?style=for-the-badge&logo=codesandbox)](https://codesandbox.io/p/github/apolocine/mostajs-survey-starter)
 
 Or a minimal **blog** (Users · Posts · Comments — relations, soft-delete, seeded data) across four frameworks:
 
-| Starter | StackBlitz | Bolt.new |
-|---|---|---|
-| **Next.js 15** (App Router) | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/nextjs-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/nextjs-mostajs-orm-starter) |
-| **Express** | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/express-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/express-mostajs-orm-starter) |
-| **Fastify** | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/fastify-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/fastify-mostajs-orm-starter) |
-| **Hono** (Node / edge) | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/hono-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/hono-mostajs-orm-starter) |
+| Starter | StackBlitz | Bolt.new | CodeSandbox |
+|---|---|---|---|
+| **Next.js 15** (App Router) | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/nextjs-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/nextjs-mostajs-orm-starter) | [![CSB](https://img.shields.io/badge/Open-CodeSandbox-151515?logo=codesandbox)](https://codesandbox.io/p/github/apolocine/nextjs-mostajs-orm-starter) |
+| **Express** | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/express-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/express-mostajs-orm-starter) | [![CSB](https://img.shields.io/badge/Open-CodeSandbox-151515?logo=codesandbox)](https://codesandbox.io/p/github/apolocine/express-mostajs-orm-starter) |
+| **Fastify** | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/fastify-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/fastify-mostajs-orm-starter) | [![CSB](https://img.shields.io/badge/Open-CodeSandbox-151515?logo=codesandbox)](https://codesandbox.io/p/github/apolocine/fastify-mostajs-orm-starter) |
+| **Hono** (Node / edge) | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/hono-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/hono-mostajs-orm-starter) | [![CSB](https://img.shields.io/badge/Open-CodeSandbox-151515?logo=codesandbox)](https://codesandbox.io/p/github/apolocine/hono-mostajs-orm-starter) |
 
 > 💡 Prefer **StackBlitz** to debug — its terminal shows install/build logs and errors clearly.
 
