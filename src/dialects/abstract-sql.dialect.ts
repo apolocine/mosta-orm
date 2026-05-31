@@ -999,8 +999,35 @@ export abstract class AbstractSqlDialect implements IDialect {
     return `${this.getCreateTablePrefix(schema.collection)} (\n${cols.join(',\n')}\n)`;
   }
 
+  /**
+   * Ensemble des colonnes physiques d'un schéma, dans le même référentiel que
+   * `generateCreateTable` / `addMissingColumns` : `id`, les `fields`, les
+   * colonnes FK (`joinColumn` des relations M2O/O2O), et les colonnes système
+   * (`createdAt`/`updatedAt` si `timestamps`, `deletedAt` si `softDelete`, la
+   * colonne discriminator si `discriminator`). Sert à valider qu'un champ
+   * d'index pointe une colonne réelle AVANT d'émettre le DDL — sinon le
+   * `CREATE INDEX` échoue ("no such column") et avorte tout l'initSchema.
+   * Voir docs/ANOMALIES-LOT3-2026-05-25.md §18.
+   */
+  protected getKnownColumns(schema: EntitySchema): Set<string> {
+    const cols = new Set<string>(['id']);
+    for (const name of Object.keys(schema.fields || {})) cols.add(name);
+    for (const [relName, rel] of Object.entries(schema.relations || {})) {
+      if (rel.type === 'many-to-many' || rel.type === 'one-to-many') continue;
+      cols.add(rel.joinColumn || relName);
+    }
+    if (schema.timestamps) {
+      cols.add('createdAt');
+      cols.add('updatedAt');
+    }
+    if (schema.softDelete) cols.add('deletedAt');
+    if (schema.discriminator) cols.add(schema.discriminator);
+    return cols;
+  }
+
   protected generateIndexes(schema: EntitySchema): string[] {
     const statements: string[] = [];
+    const knownColumns = this.getKnownColumns(schema);
 
     // `indexes` is an optional field in EntitySchema — guard against schemas
     // that simply omit it (e.g. minimal payloads received via
@@ -1020,6 +1047,22 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       // Skip text indexes
       if (fields.some(([, dir]) => dir === 'text')) continue;
+
+      // Validation B (§18) : chaque champ d'index doit correspondre à une
+      // colonne physique. Sinon le CREATE INDEX échouerait avec un diagnostic
+      // obscur ("no such column") et — avant le filet try/catch d'initSchema —
+      // avortait l'init de TOUS les schemas suivants. On saute l'index fautif
+      // en nommant explicitement la/les colonne(s) introuvable(s).
+      const unknownCols = fields.map(([f]) => f).filter(f => !knownColumns.has(f));
+      if (unknownCols.length > 0) {
+        this.log(
+          'DDL_INDEX_SKIP',
+          `${schema.name}: index #${i} ignoré — colonne(s) inexistante(s): [${unknownCols.join(', ')}]. ` +
+            `Colonnes connues: [${[...knownColumns].join(', ')}]. ` +
+            `Vérifiez schema.indexes[${i}].fields (un index sur une relation doit viser sa joinColumn).`,
+        );
+        continue;
+      }
 
       const idxName = `idx_${schema.collection}_${i}`;
       const colDefs = fields.map(([f, dir]) => `${this.quoteIdentifier(f)} ${dir === 'desc' ? 'DESC' : 'ASC'}`);
@@ -1340,7 +1383,16 @@ export abstract class AbstractSqlDialect implements IDialect {
 
       const indexStatements = this.generateIndexes(schema);
       for (const stmt of indexStatements) {
-        await this.executeIndexStatement(stmt);
+        // Filet de sécurité A (§18) : un index qui échoue ne doit JAMAIS
+        // avorter initSchema — sinon les schemas suivants ne reçoivent pas
+        // leur CREATE TABLE (cascade "no such table"). La validation amont
+        // (generateIndexes) couvre le cas "colonne inexistante" ; ce catch
+        // couvre tout autre DDL surprise, comme le try/catch des FK plus bas.
+        try {
+          await this.executeIndexStatement(stmt);
+        } catch (e) {
+          this.log('DDL_INDEX_SKIP', `${schema.collection}: index sauté (${(e as Error).message}) — init continue`);
+        }
       }
     }
 

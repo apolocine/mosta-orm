@@ -2,6 +2,32 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.5.3] — 2026-05-31
+
+### Fix — Anomalie #18 : un index fautif n'avorte plus tout `initSchema`
+
+Un `CREATE INDEX` sur une colonne inexistante était le **seul DDL non protégé**
+par un `try/catch` dans la boucle `initSchema` (FK et `addMissingColumns` en ont
+déjà un). Une exception remontait hors de la boucle `for (const schema of
+schemas)` → **les tables déclarées après le schéma fautif n'étaient jamais
+créées** (cascade `no such table`). Bloquait le provisioning de toute base
+vierge (nouvel env, démo, CI).
+
+**Fix (option C — « ceinture + bretelles »)** :
+
+- **A — résilience** : `try/catch` + log `DDL_INDEX_SKIP` autour de
+  `executeIndexStatement` dans `initSchema` ; un index KO est sauté, l'init
+  continue (aligné sur le pattern FK).
+- **B — diagnostic** : nouveau helper `getKnownColumns(schema)` (mêmes colonnes
+  que `generateCreateTable`/`addMissingColumns` : `id`, fields, joinColumns,
+  `createdAt`/`updatedAt`/`deletedAt`/discriminator) ; `generateIndexes` valide
+  chaque champ d'index et saute l'index fautif avec un warning nommant la
+  colonne introuvable au lieu d'un `no such column` opaque.
+
+Non-breaking, code partagé par les 12 dialectes SQL. Test :
+`test-scripts/anomalie-18-index-resilience.test.mjs`. Suite : 135/135 verts.
+Détails : `docs/ANOMALIES-LOT3-2026-05-25.md` §18.
+
 ## [2.5.2] — 2026-05-30
 
 ### Fix — dialect loading failed in WebContainers (StackBlitz / Bolt.new)
