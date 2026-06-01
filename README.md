@@ -94,7 +94,11 @@ Or a minimal **blog** (Users · Posts · Comments — relations, soft-delete, se
 | **Fastify** | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/fastify-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/fastify-mostajs-orm-starter) | [![CSB](https://img.shields.io/badge/Open-CodeSandbox-151515?logo=codesandbox)](https://codesandbox.io/p/github/apolocine/fastify-mostajs-orm-starter) |
 | **Hono** (Node / edge) | [![SB](https://img.shields.io/badge/Open-StackBlitz-1389FD?logo=stackblitz)](https://stackblitz.com/github/apolocine/hono-mostajs-orm-starter) | [![Bolt](https://img.shields.io/badge/Open-Bolt.new-000?logo=stackblitz)](https://bolt.new/github.com/apolocine/hono-mostajs-orm-starter) | [![CSB](https://img.shields.io/badge/Open-CodeSandbox-151515?logo=codesandbox)](https://codesandbox.io/p/github/apolocine/hono-mostajs-orm-starter) |
 
-> 💡 Prefer **StackBlitz** to debug — its terminal shows install/build logs and errors clearly.
+**Tested E2E** (June 2026) on the three platforms:
+
+- **StackBlitz** — reference; runs everything (best for debugging, the terminal shows install/build logs). All 6 ✅.
+- **Bolt.new** — runs the **server** starters (Express/Fastify/Hono) ✅, but its runtime **doesn't run Next 15 in `dev`** (`Error: Method not implemented.` from Bolt's bundle). For the **Next** starters (Next.js/SaaS/Survey) on Bolt, use **prod**: `npm run build && npm run start`.
+- **CodeSandbox** — runs everything ✅; it serves a **cross-site iframe**, so the SaaS auth sets `crossSiteCookie` (`sameSite=none; secure`) to keep sessions.
 
 Working from an **AI dev tool** (Cursor, Cline, Claude…)? Generate schemas, lint them (24 rules) and produce migrations via the MCP server **[@mostajs/orm-mcp](https://www.npmjs.com/package/@mostajs/orm-mcp)** — hosted at `https://orm-mcp.amia.fr/mcp`.
 
