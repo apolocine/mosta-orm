@@ -299,7 +299,7 @@ Because the WASM build needs **no native binary and no server**, the same typed 
 ### Use with AI dev tools
 
 - **Bolt.new · StackBlitz · CodeSandbox** — open a `sqljs` starter by URL (`bolt.new/github.com/apolocine/nextjs-mostajs-orm-starter`); it boots with no native binary.
-- **Cursor · Cline · Claude Code** — first-class schema/migration/validation tooling via the **`@mostajs/orm-mcp`** server *(on the roadmap)*; until then, point them at [`llms.txt`](https://github.com/apolocine/mosta-orm/blob/main/llms.txt) for accurate code generation.
+- **Cursor · Cline · Claude Code** — first-class schema/migration/validation tooling via the **`@mostajs/orm-mcp`** server — **live** in the official MCP Registry, hosted at `https://orm-mcp.amia.fr/mcp`. See the end-to-end sample [`18-mcp-to-running-app`](https://github.com/apolocine/mosta-orm-samples/tree/main/examples/18-mcp-to-running-app). Prefer plain codegen? Point them at [`llms.txt`](https://github.com/apolocine/mosta-orm/blob/main/llms.txt).
 
 ---
 
