@@ -112,6 +112,8 @@ Or a minimal **blog** (Users · Posts · Comments — relations, soft-delete, se
 
 Working from an **AI dev tool** (Cursor, Cline, Claude…)? Generate schemas, lint them (24 rules) and produce migrations via the MCP server **[@mostajs/orm-mcp](https://www.npmjs.com/package/@mostajs/orm-mcp)** — hosted at `https://orm-mcp.amia.fr/mcp`.
 
+> **End-to-end, in one folder** — sample [`18-mcp-to-running-app`](https://github.com/apolocine/mosta-orm-samples/tree/main/examples/18-mcp-to-running-app) walks the whole chain: `@mostajs/orm-mcp` generates the `EntitySchema`, `@mostajs/orm` applies them, and an e-commerce app (users/products/orders) runs on **`sqljs`** (SQLite WASM, zero native binary). Ships a scripted HTML proof report.
+
 ## How it compares
 
 | | @mostajs/orm | Prisma | Drizzle | TypeORM |
