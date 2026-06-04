@@ -282,7 +282,8 @@ export type DialectType =
   | 'hana'
   | 'hsqldb'
   | 'spanner'
-  | 'sybase';
+  | 'sybase'
+  | 'duckdb';
 
 /**
  * Schema generation strategy (inspired by hibernate.hbm2ddl.auto)

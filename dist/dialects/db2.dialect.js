@@ -1,0 +1,269 @@
+// IBM DB2 Dialect — extends AbstractSqlDialect
+// Equivalent to org.hibernate.dialect.DB2Dialect (Hibernate ORM 6.4)
+// Driver: npm install ibm_db
+// Author: Dr Hamid MADANI drmdh@msn.com
+import { AbstractSqlDialect } from './abstract-sql.dialect.js';
+// ============================================================
+// Type Mapping — DAL FieldType → DB2 column type
+// ============================================================
+const DB2_TYPE_MAP = {
+    string: 'VARCHAR(4000)',
+    text: 'CLOB',
+    number: 'DOUBLE',
+    boolean: 'BOOLEAN',
+    date: 'TIMESTAMP',
+    json: 'CLOB',
+    array: 'CLOB',
+};
+// ============================================================
+// DB2Dialect
+// ============================================================
+class DB2Dialect extends AbstractSqlDialect {
+    dialectType = 'db2';
+    conn = null;
+    ibmDb = null;
+    // --- Abstract implementations ---
+    quoteIdentifier(name) {
+        return `"${name}"`;
+    }
+    getPlaceholder(_index) {
+        return '?';
+    }
+    fieldToSqlType(field) {
+        return DB2_TYPE_MAP[field.type] || 'VARCHAR(4000)';
+    }
+    getIdColumnType() {
+        return 'VARCHAR(36)';
+    }
+    getTableListQuery() {
+        return "SELECT tabname as name FROM syscat.tables WHERE tabschema = CURRENT SCHEMA AND type = 'T'";
+    }
+    /**
+     * DB2 has no `DROP TABLE IF EXISTS` and no `CASCADE` keyword. Catch
+     * SQLSTATE 42704 (object does not exist) so calling drop on a missing
+     * table is a no-op like other dialects.
+     */
+    /**
+     * DB2 a des transactions implicites — standalone BEGIN invalide.
+     * DB2 utilise son propre vocabulaire d'isolation (UR/CS/RS/RR), pas ANSI.
+     * Mapping ANSI 4-niveaux → DB2 :
+     *   READ UNCOMMITTED → UR (Uncommitted Read)
+     *   READ COMMITTED   → CS (Cursor Stability) — défaut DB2
+     *   REPEATABLE READ  → RS (Read Stability)
+     *   SERIALIZABLE     → RR (Repeatable Read = serializable en sémantique DB2)
+     * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
+     */
+    beginSql(opts) {
+        if (!opts?.isolation)
+            return null;
+        let level;
+        switch (opts.isolation) {
+            case 'READ UNCOMMITTED':
+                level = 'UR';
+                break;
+            case 'READ COMMITTED':
+                level = 'CS';
+                break;
+            case 'REPEATABLE READ':
+                level = 'RS';
+                break;
+            case 'SERIALIZABLE':
+                level = 'RR';
+                break;
+            default:
+                // Si l'appelant passe déjà un code DB2 (UR/CS/RS/RR), le laisser ;
+                // sinon log + fallback CS (défaut).
+                if (['UR', 'CS', 'RS', 'RR'].includes(opts.isolation)) {
+                    level = opts.isolation;
+                }
+                else {
+                    this.log('TX', `isolation level '${opts.isolation}' non reconnu pour DB2 — fallback CS`);
+                    level = 'CS';
+                }
+        }
+        return `SET CURRENT ISOLATION = ${level}`;
+    }
+    async dropTable(tableName) {
+        try {
+            await this.executeRun(`DROP TABLE ${this.quoteIdentifier(this.getPrefixedName(tableName))}`, []);
+            this.log('DROP_TABLE', tableName);
+        }
+        catch (e) {
+            const msg = e.message ?? '';
+            if (msg.includes('42704') || /not exist/i.test(msg)) {
+                this.log('DROP_TABLE_SKIP', tableName, 'not found');
+                return;
+            }
+            throw e;
+        }
+    }
+    // --- Hooks ---
+    // DB2 11.5+ supports IF NOT EXISTS, but we stay safe
+    supportsIfNotExists() { return false; }
+    supportsReturning() { return false; }
+    serializeBoolean(v) { return v; }
+    deserializeBoolean(v) {
+        return v === true || v === 1 || v === '1' || v === 'true';
+    }
+    /** DB2 LIKE is case-sensitive — use UPPER() for case-insensitive search */
+    buildRegexCondition(col, flags) {
+        if (flags?.includes('i')) {
+            return `UPPER(${col}) LIKE UPPER(${this.nextPlaceholder()})`;
+        }
+        return `${col} LIKE ${this.nextPlaceholder()}`;
+    }
+    // DB2 uses FETCH FIRST n ROWS ONLY
+    buildLimitOffset(options) {
+        if (!options?.limit && !options?.skip)
+            return '';
+        let sql = '';
+        if (options.skip)
+            sql += ` OFFSET ${options.skip} ROWS`;
+        if (options.limit)
+            sql += ` FETCH FIRST ${options.limit} ROWS ONLY`;
+        return sql;
+    }
+    // DB2: no IF NOT EXISTS, wrap with existence check
+    getCreateTablePrefix(tableName) {
+        return `CREATE TABLE ${this.quoteIdentifier(this.getPrefixedName(tableName))}`;
+    }
+    getCreateIndexPrefix(indexName, unique) {
+        const u = unique ? 'UNIQUE ' : '';
+        return `CREATE ${u}INDEX ${this.quoteIdentifier(indexName)}`;
+    }
+    // --- Connection ---
+    async doConnect(config) {
+        try {
+            this.ibmDb = await import(/* webpackIgnore: true */ 'ibm_db');
+        }
+        catch (e) {
+            throw new Error(`IBM DB2 driver not found. Install it: npm install ibm_db\n` +
+                `Original error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        try {
+            // Parse db2://user:pass@host:port/database → ODBC connection string
+            let connStr = config.uri;
+            if (connStr.startsWith('db2://')) {
+                const url = new URL(connStr);
+                connStr = `DATABASE=${url.pathname.replace('/', '')};HOSTNAME=${url.hostname};PORT=${url.port || '50000'};PROTOCOL=TCPIP;UID=${decodeURIComponent(url.username)};PWD=${decodeURIComponent(url.password)};`;
+            }
+            const mod = this.ibmDb;
+            const open = mod.open || mod.default?.open;
+            this.conn = await open(connStr);
+        }
+        catch (e) {
+            throw new Error(`IBM DB2 connection failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+    async doDisconnect() {
+        if (this.conn) {
+            await this.conn.close();
+            this.conn = null;
+        }
+    }
+    async doTestConnection() {
+        if (!this.conn)
+            return false;
+        const rows = await this.conn.query('SELECT 1 FROM SYSIBM.SYSDUMMY1');
+        return Array.isArray(rows);
+    }
+    // --- Query execution ---
+    async doExecuteQuery(sql, params) {
+        if (!this.conn)
+            throw new Error('DB2 not connected. Call connect() first.');
+        return new Promise((resolve, reject) => {
+            this.conn.query(sql, params, (err, rows) => {
+                if (err)
+                    reject(err);
+                else
+                    resolve(rows ?? []);
+            });
+        });
+    }
+    async doExecuteRun(sql, params) {
+        if (!this.conn)
+            throw new Error('DB2 not connected. Call connect() first.');
+        return new Promise((resolve, reject) => {
+            this.conn.query(sql, params, (err) => {
+                if (err)
+                    reject(err);
+                else
+                    resolve({ changes: 0 }); // ibm_db doesn't directly return affected rows from query
+            });
+        });
+    }
+    // Override initSchema to handle DB2's lack of IF NOT EXISTS
+    async initSchema(schemas) {
+        this.schemas = schemas;
+        const strategy = this.config?.schemaStrategy ?? 'none';
+        this.log('INIT_SCHEMA', `strategy=${strategy}`, { entities: schemas.map(s => s.name) });
+        if (strategy === 'none')
+            return;
+        if (strategy === 'validate') {
+            for (const schema of schemas) {
+                const exists = await this.tableExists(schema.collection);
+                if (!exists) {
+                    throw new Error(`Schema validation failed: table "${schema.collection}" does not exist ` +
+                        `(entity: ${schema.name}). Set schemaStrategy to "update" or "create".`);
+                }
+            }
+            return;
+        }
+        // Anomalie #14 (fix 2.2.9) : create-drop = DROP au boot + DROP au shutdown.
+        if (strategy === 'create-drop' || strategy === 'create') {
+            this.log('SCHEMA', 'create-drop boot — dropping registered schemas before re-create');
+            await this.dropSchema(schemas);
+        }
+        for (const schema of schemas) {
+            const exists = await this.tableExists(schema.collection);
+            if (!exists) {
+                const createSql = this.generateCreateTable(schema);
+                this.log('DDL', schema.collection, createSql);
+                await this.executeRun(createSql, []);
+            }
+            else if (strategy === 'update') {
+                await this.addMissingColumns(schema);
+            }
+            const indexStatements = this.generateIndexes(schema);
+            for (const stmt of indexStatements) {
+                try {
+                    await this.executeRun(stmt, []);
+                }
+                catch (e) {
+                    this.log('CREATE_INDEX', `skipped (may already exist): ${e.message}`);
+                }
+            }
+        }
+        // Junction tables
+        for (const schema of schemas) {
+            for (const [, rel] of Object.entries(schema.relations || {})) {
+                if (rel.type === 'many-to-many' && rel.through) {
+                    const exists = await this.tableExists(rel.through);
+                    if (exists)
+                        continue;
+                    const targetSchema = schemas.find(s => s.name === rel.target);
+                    if (!targetSchema)
+                        continue;
+                    const sourceKey = `${schema.name.toLowerCase()}Id`;
+                    const targetKey = `${rel.target.toLowerCase()}Id`;
+                    const q = (n) => this.quoteIdentifier(n);
+                    const idType = this.getIdColumnType();
+                    const ddl = `CREATE TABLE ${q(rel.through)} (
+  ${q(sourceKey)} ${idType} NOT NULL,
+  ${q(targetKey)} ${idType} NOT NULL,
+  PRIMARY KEY (${q(sourceKey)}, ${q(targetKey)})
+)`;
+                    this.log('DDL_JUNCTION', rel.through, ddl);
+                    await this.executeRun(ddl, []);
+                }
+            }
+        }
+    }
+    getDialectLabel() { return 'DB2'; }
+}
+// ============================================================
+// Factory export
+// ============================================================
+export function createDialect() {
+    return new DB2Dialect();
+}

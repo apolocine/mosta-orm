@@ -1,0 +1,165 @@
+let _Database = null;
+async function loadDatabase() {
+    if (!_Database) {
+        const pkg = 'better-sqlite' + '3';
+        const mod = await import(/* webpackIgnore: true */ pkg);
+        _Database = mod.default;
+    }
+    return _Database;
+}
+import { resolve, dirname } from 'path';
+import { mkdirSync, existsSync } from 'fs';
+import { AbstractSqlDialect } from './abstract-sql.dialect.js';
+// ============================================================
+// Type Mapping — DAL FieldType → SQLite column type
+// ============================================================
+const SQLITE_TYPE_MAP = {
+    string: 'TEXT',
+    text: 'TEXT',
+    number: 'REAL',
+    boolean: 'INTEGER',
+    date: 'TEXT',
+    json: 'TEXT',
+    array: 'TEXT',
+};
+// ============================================================
+// SQLiteDialect — normalizer sync → async
+// ============================================================
+export class SQLiteDialect extends AbstractSqlDialect {
+    dialectType = 'sqlite';
+    /** Exposed for raw access in tests (same pattern as before refactoring) */
+    db = null;
+    // --- Abstract implementations ---
+    quoteIdentifier(name) {
+        return `"${name}"`;
+    }
+    getPlaceholder(_index) {
+        return '?';
+    }
+    fieldToSqlType(field) {
+        return SQLITE_TYPE_MAP[field.type] || 'TEXT';
+    }
+    getIdColumnType() {
+        return 'TEXT';
+    }
+    getTableListQuery() {
+        return "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
+    }
+    /** SQLite uses `PRAGMA table_info(name)` — the result column is `name`. */
+    async getExistingColumns(tableName) {
+        try {
+            const rows = await this.executeQuery(`PRAGMA table_info(${this.quoteIdentifier(tableName)})`, []);
+            return new Set(rows.map(r => r.name).filter(Boolean));
+        }
+        catch {
+            return new Set();
+        }
+    }
+    // --- Hooks ---
+    supportsIfNotExists() { return true; }
+    supportsReturning() { return false; }
+    serializeBoolean(v) { return v ? 1 : 0; }
+    deserializeBoolean(v) { return v === 1 || v === true || v === '1'; }
+    /**
+     * SQLite ne supporte pas `ALTER TABLE … ADD CONSTRAINT FOREIGN KEY` —
+     * les FK doivent être déclarées dans le `CREATE TABLE` initial.
+     * Voir docs/ANOMALIES-LOT3-2026-05-25.md §6.
+     */
+    supportsAlterTableAddForeignKey() { return false; }
+    /**
+     * SQLite ne supporte pas la syntaxe `DROP TABLE ... CASCADE` (syntax error).
+     * Les FK SQLite sont OFF par défaut et déclarées dans CREATE TABLE — drop
+     * d'une table parent ne casse rien automatiquement, donc CASCADE est inutile.
+     * Voir docs/ANOMALIES-LOT3-2026-05-25.md §14.
+     */
+    getDropTableSql(tableName) {
+        return `DROP TABLE IF EXISTS ${this.quoteIdentifier(tableName)}`;
+    }
+    /**
+     * SQLite ne supporte pas la syntaxe ANSI `SET TRANSACTION ISOLATION LEVEL`.
+     * Mapping des 4 niveaux ANSI vers les 3 modes SQLite (DEFERRED/IMMEDIATE/EXCLUSIVE).
+     * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
+     */
+    beginSql(opts) {
+        if (!opts?.isolation)
+            return 'BEGIN';
+        switch (opts.isolation) {
+            case 'READ UNCOMMITTED':
+            case 'READ COMMITTED':
+                return 'BEGIN DEFERRED TRANSACTION';
+            case 'REPEATABLE READ':
+                return 'BEGIN IMMEDIATE TRANSACTION';
+            case 'SERIALIZABLE':
+                return 'BEGIN EXCLUSIVE TRANSACTION';
+            default:
+                this.log('TX', `isolation level '${opts.isolation}' non reconnu pour SQLite — fallback DEFERRED`);
+                return 'BEGIN DEFERRED TRANSACTION';
+        }
+    }
+    // --- Connection lifecycle (sync → async normalizer) ---
+    async doConnect(config) {
+        const Db = await loadDatabase();
+        if (config.uri !== ':memory:') {
+            const dbPath = resolve(config.uri);
+            const dbDir = dirname(dbPath);
+            if (!existsSync(dbDir)) {
+                mkdirSync(dbDir, { recursive: true });
+            }
+            this.db = new Db(dbPath);
+        }
+        else {
+            this.db = new Db(':memory:');
+        }
+        // WAL mode for better concurrency + referential integrity
+        this.db.pragma('journal_mode = WAL');
+        this.db.pragma('foreign_keys = ON');
+    }
+    async doDisconnect() {
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
+    }
+    async doTestConnection() {
+        if (!this.db)
+            return false;
+        try {
+            this.db.prepare('SELECT 1').get();
+            return true;
+        }
+        catch (e) {
+            // scan-ignore: testConnection retourne explicitement boolean — false=down
+            this.log('TEST_CONNECTION', `down: ${e.message}`);
+            return false;
+        }
+    }
+    // --- Query execution (sync → async normalizer) ---
+    async doExecuteQuery(sql, params) {
+        if (!this.db)
+            throw new Error('SQLite not connected. Call connect() first.');
+        return this.db.prepare(sql).all(...params);
+    }
+    async doExecuteRun(sql, params) {
+        if (!this.db)
+            throw new Error('SQLite not connected. Call connect() first.');
+        const result = this.db.prepare(sql).run(...params);
+        return { changes: result.changes };
+    }
+    // --- dropAllTables override (needs foreign_keys OFF for SQLite) ---
+    async dropAllTables() {
+        if (!this.db)
+            return;
+        const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+        this.db.pragma('foreign_keys = OFF');
+        for (const t of tables) {
+            this.db.exec(`DROP TABLE IF EXISTS "${t.name}"`);
+        }
+        this.db.pragma('foreign_keys = ON');
+    }
+}
+// ============================================================
+// Factory export
+// ============================================================
+export function createDialect() {
+    return new SQLiteDialect();
+}

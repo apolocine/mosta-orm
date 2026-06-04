@@ -116,6 +116,10 @@ export const DIALECT_CONFIGS: Record<DialectType, DialectConfig> = {
     installHint: 'npm install sybase',
     label: 'Sybase ASE',
   },
+  duckdb: {
+    installHint: 'npm install duckdb',
+    label: 'DuckDB (OLAP in-process — fichier / :memory:)',
+  },
 };
 
 /**

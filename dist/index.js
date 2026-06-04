@@ -1,0 +1,63 @@
+// MostaORM — Hibernate-inspired multi-dialect ORM for Node.js/TypeScript
+// Author: Dr Hamid MADANI drmdh@msn.com
+// ============================================================
+// Config
+// ============================================================
+export { DIALECT_CONFIGS, getSupportedDialects, getDialectConfig, } from './core/config.js';
+// ============================================================
+// Registry
+// ============================================================
+export { registerSchema, registerSchemas, getSchema, getSchemaByCollection, getAllSchemas, getEntityNames, hasSchema, validateSchemas, clearRegistry, } from './core/registry.js';
+// ============================================================
+// Factory
+// ============================================================
+export { getDialect, getConfigFromEnv, getCurrentDialectType, disconnectDialect, testConnection, createConnection, createIsolatedDialect, createDatabase, dropDatabase, 
+// Named Connection Registry (for Next.js / webpack chunk sharing)
+registerNamedConnection, getNamedConnection, removeNamedConnection, listNamedConnections, clearNamedConnections, } from './core/factory.js';
+// ============================================================
+// Env loader with MOSTA_ENV profile cascade
+// Re-exported from @mostajs/config for convenience (since v1.13.0).
+// For new code, prefer importing directly from '@mostajs/config'.
+// ============================================================
+export { getEnv, getEnvBool, getEnvNumber, getCurrentProfile, } from '@mostajs/config';
+// ============================================================
+// Base Repository
+// ============================================================
+export { BaseRepository } from './core/base-repository.js';
+// ============================================================
+// Introspection — findById polymorphique (2.0+)
+// Permet `findById(string)`, `findById({ id })`, `findById({ uniqueField })`.
+// Doc : docs/TECHNIQUE-INTROSPECTION-FINDONEBYID.md
+// ============================================================
+export { OrmIntrospectionError, resolveLookup, findMatchingUniqueIndex, extractRelId, } from './core/introspection.js';
+// ============================================================
+// Utils
+// ============================================================
+export { normalizeDoc, normalizeDocs } from './core/normalizer.js';
+// ============================================================
+// JDBC Bridge — moved to subpath '@mostajs/orm/bridge' in v1.9.4
+// ============================================================
+//
+// Reason : the JDBC bridge transitively imports `child_process`, `fs` and
+// spawns a Java subprocess. Keeping those symbols on the package root
+// dragged them into client bundles (Next.js RSC build, Vite SSR, etc.) —
+// causing `Can't resolve 'child_process'` in the browser chunk even for
+// apps that never touch JDBC.
+//
+// Migration : use the subpath export. Example :
+//   import { JdbcNormalizer, parseUri } from '@mostajs/orm/bridge'
+//
+// Types are re-exported from the subpath too ; no runtime cost for
+// consumers that don't use the bridge.
+// ============================================================
+// Entity Service (facade CRUD + EventEmitter for @mostajs/net)
+// ============================================================
+export { EntityService } from './core/entity-service.js';
+// ============================================================
+// Schema Diff & Migrations
+// ============================================================
+export { diffSchemas, generateMigrationSQL } from './core/schema-diff.js';
+// ============================================================
+// Errors
+// ============================================================
+export { MostaORMError, EntityNotFoundError, ConnectionError, ValidationError, DialectNotFoundError, } from './core/errors.js';

@@ -50,6 +50,7 @@ const DIALECT_LOADERS: Record<DialectType, () => Promise<{ createDialect: () => 
   hsqldb:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/hsqldb.dialect.js'),
   spanner:     () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/spanner.dialect.js'),
   sybase:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sybase.dialect.js'),
+  duckdb:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/duckdb.dialect.js'),
 };
 
 /**
@@ -392,8 +393,8 @@ export async function dropDatabase(
   uri: string,
   dbName: string,
 ): Promise<{ ok: boolean; detail?: string; error?: string }> {
-  if (dialect === 'sqlite' || dialect === 'sqljs') {
-    // sqljs in-memory (or :memory:) — nothing on disk to drop.
+  if (dialect === 'sqlite' || dialect === 'sqljs' || dialect === 'duckdb') {
+    // sqljs/duckdb in-memory (or :memory:) — nothing on disk to drop.
     if (uri === ':memory:' || !uri) return { ok: true, detail: `${dialect} :memory: — nothing to drop` };
     try {
       const { unlinkSync, existsSync } = await import('fs');
@@ -495,7 +496,7 @@ export async function createDatabase(
   if (dialect === 'mongodb') {
     return { ok: true, detail: 'MongoDB: auto-created on first write' };
   }
-  if (dialect === 'sqlite' || dialect === 'sqljs') {
+  if (dialect === 'sqlite' || dialect === 'sqljs' || dialect === 'duckdb') {
     return { ok: true, detail: `${dialect}: file auto-created` };
   }
   if (dialect === 'pglite') {

@@ -1,0 +1,535 @@
+import { getDialectConfig, getSupportedDialects } from './config.js';
+import { getAllSchemas, registerSchemas } from './registry.js';
+import { getEnv, getEnvBool, getEnvNumber, getCurrentProfile } from '@mostajs/config';
+/** Singleton dialect instance */
+let currentDialect = null;
+let currentConfig = null;
+/**
+ * Tracking des schemas déjà passés à `initSchema` sur le singleton courant.
+ * Permet le lazy refresh quand `registerSchemas` est appelé APRÈS `getDialect()`
+ * (cas typique : @mostajs/auth crée le singleton au boot Next.js avant que
+ * le code applicatif ait pu remplir le registry).
+ * Reset par `disconnectDialect()`.
+ * Voir docs/ANOMALIES-LOT3-2026-05-25.md §13.
+ */
+const initializedSchemaNames = new Set();
+/**
+ * Per-dialect lazy loaders. Each uses a STATIC *relative* specifier so the
+ * module loader resolves it correctly in every runtime — including
+ * WebContainers (StackBlitz / Bolt.new), where a dynamic `import()` of an
+ * absolute `file://` URL fails (it worked only on Node and some WebContainer
+ * builds). The `webpackIgnore` / `@vite-ignore` pragmas keep bundlers from
+ * tracing every dialect driver (mongoose, pg, oracledb…) into the graph: only
+ * the dialect actually requested at runtime is loaded.
+ */
+const DIALECT_LOADERS = {
+    mongodb: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/mongo.dialect.js'),
+    sqlite: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sqlite.dialect.js'),
+    sqljs: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sqljs.dialect.js'),
+    postgres: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/postgres.dialect.js'),
+    pglite: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/pglite.dialect.js'),
+    mysql: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/mysql.dialect.js'),
+    mariadb: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/mariadb.dialect.js'),
+    oracle: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/oracle.dialect.js'),
+    mssql: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/mssql.dialect.js'),
+    cockroachdb: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/cockroachdb.dialect.js'),
+    db2: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/db2.dialect.js'),
+    hana: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/hana.dialect.js'),
+    hsqldb: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/hsqldb.dialect.js'),
+    spanner: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/spanner.dialect.js'),
+    sybase: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sybase.dialect.js'),
+    duckdb: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/duckdb.dialect.js'),
+};
+/**
+ * Dynamically load a dialect adapter module.
+ * Only the selected dialect is loaded — no unused drivers in memory.
+ */
+async function loadDialectModule(dialect) {
+    const loader = DIALECT_LOADERS[dialect];
+    if (!loader) {
+        throw new Error(`No loader for dialect "${dialect}". Supported: ${getSupportedDialects().join(', ')}`);
+    }
+    return loader();
+}
+/**
+ * Read the database configuration from environment variables.
+ *
+ * Resolution cascade : if `MOSTA_ENV` is set (e.g. `TEST`, `DEV`, `PROD`),
+ * profile-prefixed variables override their plain counterparts.
+ *
+ *   MOSTA_ENV=TEST
+ *   TEST_DB_DIALECT=sqlite   ← used
+ *   DB_DIALECT=postgres      ← ignored when profile override exists
+ *
+ * Missing profile overrides silently fall back to the plain variables.
+ *
+ * Required (after cascade) :
+ *   DB_DIALECT  = mongodb | sqlite | postgres | mysql | mariadb | oracle |
+ *                 mssql | cockroachdb | db2 | hana | hsqldb | spanner | sybase
+ *   SGBD_URI    = connection string
+ *
+ * Throws if DB_DIALECT or SGBD_URI is missing (both profiled and plain).
+ */
+export function getConfigFromEnv() {
+    const dialect = getEnv('DB_DIALECT');
+    const uri = getEnv('SGBD_URI');
+    const profile = getCurrentProfile();
+    if (!dialect) {
+        const hint = profile
+            ? `\nActive profile: MOSTA_ENV=${profile} — expected ${profile}_DB_DIALECT or DB_DIALECT`
+            : '';
+        throw new Error('DB_DIALECT is not defined in environment' + hint + '\n' +
+            `Supported: ${getSupportedDialects().join(', ')}`);
+    }
+    // Validate dialect name
+    getDialectConfig(dialect);
+    if (!uri) {
+        const hint = profile
+            ? `\nActive profile: MOSTA_ENV=${profile} — expected ${profile}_SGBD_URI or SGBD_URI`
+            : '';
+        throw new Error(`SGBD_URI is not defined in environment` + hint + '\n' +
+            `DB_DIALECT=${dialect} requires a connection string in SGBD_URI`);
+    }
+    return {
+        dialect,
+        uri,
+        // Hibernate-inspired properties from env (with profile cascade)
+        showSql: getEnvBool('DB_SHOW_SQL', false),
+        formatSql: getEnvBool('DB_FORMAT_SQL', false),
+        highlightSql: getEnvBool('DB_HIGHLIGHT_SQL', false),
+        schemaStrategy: (getEnv('DB_SCHEMA_STRATEGY', 'none')),
+        tablePrefix: getEnv('DB_TABLE_PREFIX') || undefined,
+        poolSize: getEnvNumber('DB_POOL_SIZE'),
+        cacheEnabled: getEnvBool('DB_CACHE_ENABLED', false),
+        cacheTtlSeconds: getEnvNumber('DB_CACHE_TTL'),
+        batchSize: getEnvNumber('DB_BATCH_SIZE'),
+    };
+}
+/**
+ * Initialize and connect the dialect.
+ * Returns a singleton — subsequent calls return the same instance.
+ */
+export async function getDialect(config) {
+    if (currentDialect) {
+        // Lazy refresh : si registerSchemas a ajouté des schemas DEPUIS le dernier
+        // initSchema, ré-initialiser. Cas typique : @mostajs/auth a créé le
+        // singleton AVANT que registerSchemas applicatif ne soit appelé — sans
+        // ce refresh, mongoose.models reste vide ET this.schemas reste vide,
+        // ce qui casse populateRelations cross-schema.
+        //
+        // IMPORTANT : on passe TOUS les schemas du registry à initSchema, pas
+        // juste le diff. Raison : `initSchema(schemas)` fait `this.schemas =
+        // schemas` (replace, pas merge) côté dialects SQL. Passer le diff
+        // écraserait this.schemas au lieu de l'agréger, ce qui ferait disparaître
+        // les targets populate. initSchema reste idempotent (Mongo: getModel cache ;
+        // SQL: CREATE TABLE IF NOT EXISTS).
+        //
+        // Voir docs/ANOMALIES-LOT3-2026-05-25.md §13 + §16.
+        const allSchemas = getAllSchemas();
+        const hasNew = allSchemas.some(s => !initializedSchemaNames.has(s.name));
+        if (hasNew) {
+            await currentDialect.initSchema(allSchemas);
+            for (const s of allSchemas)
+                initializedSchemaNames.add(s.name);
+        }
+        return currentDialect;
+    }
+    const cfg = config || getConfigFromEnv();
+    const dialectCfg = getDialectConfig(cfg.dialect);
+    try {
+        const mod = await loadDialectModule(cfg.dialect);
+        currentDialect = mod.createDialect();
+        await currentDialect.connect(cfg);
+        currentConfig = cfg;
+        // Hibernate SessionFactory — register all entity models on first connection
+        const all = getAllSchemas();
+        await currentDialect.initSchema(all);
+        for (const s of all)
+            initializedSchemaNames.add(s.name);
+        return currentDialect;
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('Cannot find module') || message.includes('MODULE_NOT_FOUND')) {
+            throw new Error(`Dialect "${dialectCfg.label}" requires a driver. Install it:\n  ${dialectCfg.installHint}`);
+        }
+        throw err;
+    }
+}
+/**
+ * Get the current dialect type without connecting.
+ * Respects MOSTA_ENV profile cascade.
+ */
+export function getCurrentDialectType() {
+    if (currentConfig)
+        return currentConfig.dialect;
+    return getEnv('DB_DIALECT') || 'mongodb';
+}
+/**
+ * Disconnect the current dialect and reset the singleton.
+ */
+export async function disconnectDialect() {
+    if (currentDialect) {
+        await currentDialect.disconnect();
+        currentDialect = null;
+        currentConfig = null;
+        initializedSchemaNames.clear(); // reset tracking pour future recreation
+    }
+}
+/**
+ * Test the connection with a given config without changing the active dialect.
+ * Used by the setup wizard to validate before committing.
+ */
+export async function testConnection(config) {
+    try {
+        const mod = await loadDialectModule(config.dialect);
+        const dialect = mod.createDialect();
+        await dialect.connect(config);
+        const ok = await dialect.testConnection();
+        await dialect.disconnect();
+        if (!ok) {
+            return { ok: false, error: 'Connection test returned false (SELECT 1 failed or driver test failed)' };
+        }
+        return { ok: true };
+    }
+    catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        return { ok: false, error };
+    }
+}
+/**
+ * Simplified high-level API: connect to a database and optionally register schemas.
+ * Returns the connected dialect instance.
+ *
+ * Example:
+ *   const dialect = await createConnection({
+ *     dialect: 'sqlite',
+ *     uri: './my.db',
+ *     schemaStrategy: 'update',
+ *   }, [ContactSchema, OrderSchema]);
+ */
+export async function createConnection(config, schemas) {
+    if (schemas) {
+        registerSchemas(schemas);
+    }
+    return getDialect(config);
+}
+// ============================================================
+// Isolated dialect — no singleton, no global registry
+// Used by @mostajs/mproject for multi-project support
+// ============================================================
+/**
+ * Create an isolated dialect instance — NOT stored as singleton.
+ * Each call returns a new, independent connection to the database.
+ * Schemas are initialized on this instance only, not in the global registry.
+ *
+ * Use this when you need multiple simultaneous database connections
+ * (e.g., multi-project / multi-tenant scenarios).
+ *
+ * Example:
+ *   const pgDialect = await createIsolatedDialect({
+ *     dialect: 'postgres',
+ *     uri: 'postgresql://user:pass@localhost:5432/mydb',
+ *   }, [UsersSchema, OrdersSchema]);
+ *
+ *   const oracleDialect = await createIsolatedDialect({
+ *     dialect: 'oracle',
+ *     uri: 'oracle://user:pass@localhost:1521/XE',
+ *   }, [UsersSchema]);
+ *
+ *   // Each dialect is independent — no shared state
+ */
+export async function createIsolatedDialect(config, schemas) {
+    const dialectCfg = getDialectConfig(config.dialect);
+    // Normalize schemas — ensure required fields exist to avoid null references
+    const safeSchemas = schemas?.map(s => ({
+        ...s,
+        fields: s.fields || {},
+        relations: s.relations || {},
+        indexes: s.indexes || [],
+    })) || [];
+    try {
+        const mod = await loadDialectModule(config.dialect);
+        const dialect = mod.createDialect();
+        await dialect.connect(config);
+        // Initialize schemas on this instance only (not in global registry)
+        if (safeSchemas.length > 0) {
+            await dialect.initSchema(safeSchemas);
+        }
+        return dialect;
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('Cannot find module') || message.includes('MODULE_NOT_FOUND')) {
+            throw new Error(`Dialect "${dialectCfg.label}" requires a driver. Install it:\n  ${dialectCfg.installHint}`);
+        }
+        throw err;
+    }
+}
+// ============================================================
+// Database creation
+// ============================================================
+/** System/default database used to connect before CREATE DATABASE */
+const SYSTEM_DB = {
+    postgres: 'postgres',
+    cockroachdb: 'postgres',
+    mysql: 'mysql',
+    mariadb: 'mysql',
+    mssql: 'master',
+    oracle: 'XEPDB1',
+    db2: 'SAMPLE',
+    hana: 'SYSTEM',
+    hsqldb: 'xdb',
+    sybase: 'master',
+};
+/** DDL to create a database, per dialect family */
+function getCreateDDL(dialect, dbName) {
+    switch (dialect) {
+        case 'mysql':
+        case 'mariadb':
+            return `CREATE DATABASE IF NOT EXISTS \`${dbName}\``;
+        case 'mssql':
+            return `IF NOT EXISTS (SELECT * FROM sys.databases WHERE name='${dbName}') CREATE DATABASE [${dbName}]`;
+        default:
+            // postgres, cockroachdb, db2, hana, hsqldb, sybase, oracle
+            return `CREATE DATABASE "${dbName}"`;
+    }
+}
+/** Error codes that mean "database already exists" */
+function isAlreadyExistsError(dialect, err) {
+    const msg = (err?.message || '').toLowerCase();
+    const code = err?.code || '';
+    return (code === '42P04' || // PostgreSQL
+        msg.includes('already exists') ||
+        msg.includes('database exists') ||
+        msg.includes('existe déjà') ||
+        (dialect === 'mysql' && code === 'ER_DB_CREATE_EXISTS') ||
+        (dialect === 'mssql' && msg.includes('already exists')));
+}
+/** DDL to drop a database, per dialect family */
+function getDropDDL(dialect, dbName) {
+    switch (dialect) {
+        case 'mysql':
+        case 'mariadb':
+            return `DROP DATABASE IF EXISTS \`${dbName}\``;
+        case 'mssql':
+            return `IF EXISTS (SELECT * FROM sys.databases WHERE name='${dbName}') DROP DATABASE [${dbName}]`;
+        case 'postgres':
+        case 'cockroachdb':
+            return `DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`;
+        default:
+            return `DROP DATABASE "${dbName}"`;
+    }
+}
+/**
+ * Drop a database.
+ *
+ * - **mongodb**: drops the database (all collections deleted)
+ * - **sqlite**: deletes the file
+ * - **spanner**: not supported (use gcloud CLI)
+ * - **SQL dialects**: connects to the system DB, runs DROP DATABASE
+ *
+ * ⚠️ This is IRREVERSIBLE — all data in the database will be lost.
+ *
+ * @param dialect  - target dialect
+ * @param uri      - full connection URI to the TARGET database
+ * @param dbName   - name of the database to drop
+ */
+export async function dropDatabase(dialect, uri, dbName) {
+    if (dialect === 'sqlite' || dialect === 'sqljs' || dialect === 'duckdb') {
+        // sqljs/duckdb in-memory (or :memory:) — nothing on disk to drop.
+        if (uri === ':memory:' || !uri)
+            return { ok: true, detail: `${dialect} :memory: — nothing to drop` };
+        try {
+            const { unlinkSync, existsSync } = await import('fs');
+            // SQLite WAL files (sqljs writes a single .db snapshot, the suffixes are harmless no-ops)
+            for (const suffix of ['', '-wal', '-shm', '-journal']) {
+                const f = uri + suffix;
+                if (existsSync(f))
+                    unlinkSync(f);
+            }
+            return { ok: true, detail: `SQLite file "${uri}" deleted` };
+        }
+        catch (e) {
+            return { ok: false, error: e.message };
+        }
+    }
+    if (dialect === 'pglite') {
+        // Embedded Postgres-in-WASM : memory:// / idb:// → rien à supprimer côté
+        // serveur ; persistance fichier = un répertoire (suppression manuelle, on
+        // n'auto-rm pas un dossier pour éviter toute perte accidentelle).
+        return { ok: true, detail: 'pglite: embedded — remove the data dir manually (memory:// / idb:// : nothing to drop)' };
+    }
+    if (dialect === 'mongodb') {
+        try {
+            const mod = await loadDialectModule(dialect);
+            const d = mod.createDialect();
+            await d.connect({ dialect, uri, schemaStrategy: 'none' });
+            // MongoDB dropDatabase is on the connection
+            await d.dropDatabase?.();
+            await d.disconnect();
+            return { ok: true, detail: `MongoDB database dropped` };
+        }
+        catch (e) {
+            return { ok: false, error: e.message };
+        }
+    }
+    if (dialect === 'oracle') {
+        return { ok: false, error: 'Oracle: drop user/schema via DBA, not via ORM' };
+    }
+    if (dialect === 'spanner') {
+        return { ok: false, error: 'Cloud Spanner: drop via gcloud CLI' };
+    }
+    // SQL dialects — connect to system DB, run DROP DATABASE
+    const systemDbName = SYSTEM_DB[dialect] || 'postgres';
+    const systemUri = uri.replace(/\/([^/?]+)(\?|$)/, `/${systemDbName}$2`);
+    try {
+        const mod = await loadDialectModule(dialect);
+        const d = mod.createDialect();
+        await d.connect({ dialect, uri: systemUri, schemaStrategy: 'none' });
+        // For PostgreSQL: terminate active connections first
+        if (dialect === 'postgres' || dialect === 'cockroachdb') {
+            try {
+                await d.executeRun(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${dbName}' AND pid<>pg_backend_pid()`, []);
+            }
+            catch {
+                // scan-ignore: pg_terminate_backend best-effort — DROP DATABASE diagnostiquera ensuite
+            }
+        }
+        const ddl = getDropDDL(dialect, dbName);
+        try {
+            await d.executeRun(ddl, []);
+            await d.disconnect();
+            return { ok: true, detail: `Database "${dbName}" dropped` };
+        }
+        catch (err) {
+            await d.disconnect();
+            const msg = (err?.message || '').toLowerCase();
+            if (msg.includes('does not exist') || msg.includes('n\'existe pas') || msg.includes('not exist')) {
+                return { ok: true, detail: `Database "${dbName}" does not exist (already dropped)` };
+            }
+            return { ok: false, error: err.message };
+        }
+    }
+    catch (err) {
+        return { ok: false, error: err.message };
+    }
+}
+/**
+ * Create a database if it does not exist.
+ *
+ * - **mongodb**: no-op (auto-created on first write)
+ * - **sqlite**: no-op (file auto-created)
+ * - **spanner**: not supported (use gcloud CLI)
+ * - **SQL dialects**: connects to the system DB, runs CREATE DATABASE
+ *
+ * @param dialect  - target dialect
+ * @param uri      - full connection URI to the TARGET database (used to extract credentials)
+ * @param dbName   - name of the database to create
+ */
+export async function createDatabase(dialect, uri, dbName) {
+    // Auto-created dialects
+    if (dialect === 'mongodb') {
+        return { ok: true, detail: 'MongoDB: auto-created on first write' };
+    }
+    if (dialect === 'sqlite' || dialect === 'sqljs' || dialect === 'duckdb') {
+        return { ok: true, detail: `${dialect}: file auto-created` };
+    }
+    if (dialect === 'pglite') {
+        return { ok: true, detail: 'pglite: embedded data dir auto-created (memory:// / idb:// / path)' };
+    }
+    if (dialect === 'oracle') {
+        return { ok: true, detail: 'Oracle: tables are created in the connected user schema (PDB service)' };
+    }
+    if (dialect === 'spanner') {
+        return { ok: false, error: 'Cloud Spanner: create via gcloud CLI' };
+    }
+    // Build a URI pointing to the system DB (same host/credentials, different DB name)
+    const systemDbName = SYSTEM_DB[dialect] || 'postgres';
+    const systemUri = uri.replace(/\/([^/?]+)(\?|$)/, `/${systemDbName}$2`);
+    try {
+        // Load dialect, connect to system DB
+        const mod = await loadDialectModule(dialect);
+        const d = mod.createDialect();
+        await d.connect({
+            dialect,
+            uri: systemUri,
+            schemaStrategy: 'none',
+        });
+        // Run CREATE DATABASE
+        const ddl = getCreateDDL(dialect, dbName);
+        try {
+            await d.executeRun(ddl, []);
+            await d.disconnect();
+            return { ok: true, detail: `Database "${dbName}" created` };
+        }
+        catch (err) {
+            await d.disconnect();
+            if (isAlreadyExistsError(dialect, err)) {
+                return { ok: true, detail: `Database "${dbName}" already exists` };
+            }
+            return { ok: false, error: err.message };
+        }
+    }
+    catch (err) {
+        return { ok: false, error: err.message };
+    }
+}
+// ============================================================
+// Named Connection Registry
+// ============================================================
+//
+// Stores dialect instances by name in a module-level Map.
+// Since @mostajs/orm is a serverExternalPackage (NOT bundled by webpack),
+// this Map is shared across ALL server chunks in the same Node.js process.
+//
+// LIFECYCLE:
+//   Server starts → Map empty
+//   First request → createConnection() + registerNamedConnection('portal', dialect)
+//   Subsequent requests → getNamedConnection('portal') → same dialect ✅
+//   Server restarts → Map empty → reconnects on first request
+//
+// USAGE (Next.js):
+//   import { createConnection, registerNamedConnection, getNamedConnection } from '@mostajs/orm'
+//   export async function getDialect() {
+//     const cached = getNamedConnection('portal')
+//     if (cached) return cached
+//     const dialect = await createConnection(config, schemas)
+//     registerNamedConnection('portal', dialect)
+//     return dialect
+//   }
+// ============================================================
+/** Named connections registry — shared across all consumers of this module */
+const _namedConnections = new Map();
+/**
+ * Register a named connection for later retrieval.
+ * @param name    - Unique name (e.g., 'portal', 'analytics', 'tenant-42')
+ * @param dialect - Connected dialect instance
+ */
+export function registerNamedConnection(name, dialect) {
+    _namedConnections.set(name, dialect);
+}
+/**
+ * Retrieve a previously registered named connection.
+ * Returns null if not found. Does NOT create a new connection.
+ * @param name - Connection name
+ */
+export function getNamedConnection(name) {
+    return _namedConnections.get(name) ?? null;
+}
+/**
+ * Remove a named connection from the registry.
+ * Does NOT disconnect — call dialect.disconnect() separately.
+ * @param name - Connection name to remove
+ */
+export function removeNamedConnection(name) {
+    _namedConnections.delete(name);
+}
+/** List all registered connection names. */
+export function listNamedConnections() {
+    return Array.from(_namedConnections.keys());
+}
+/** Remove all named connections (for testing or shutdown). */
+export function clearNamedConnections() {
+    _namedConnections.clear();
+}

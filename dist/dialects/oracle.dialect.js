@@ -1,0 +1,408 @@
+// Oracle Database Dialect — extends AbstractSqlDialect
+// Equivalent to org.hibernate.dialect.OracleDialect (Hibernate ORM 6.4)
+// Driver: npm install oracledb
+// Author: Dr Hamid MADANI drmdh@msn.com
+import { AbstractSqlDialect } from './abstract-sql.dialect.js';
+// ============================================================
+// Type Mapping — DAL FieldType → Oracle column type
+// ============================================================
+const ORACLE_TYPE_MAP = {
+    string: 'VARCHAR2(4000)',
+    text: 'CLOB',
+    number: 'NUMBER',
+    boolean: 'NUMBER(1)',
+    date: 'TIMESTAMP',
+    json: 'CLOB',
+    array: 'CLOB',
+};
+// ============================================================
+// OracleDialect
+// ============================================================
+class OracleDialect extends AbstractSqlDialect {
+    dialectType = 'oracle';
+    pool = null;
+    oracledb = null;
+    // Mutex to serialize concurrent queries (oracledb thin mode buffer safety)
+    _mutex = Promise.resolve();
+    acquireMutex() {
+        let release;
+        const prev = this._mutex;
+        this._mutex = new Promise(resolve => { release = resolve; });
+        return prev.then(() => release);
+    }
+    // --- Abstract implementations ---
+    quoteIdentifier(name) {
+        return `"${name}"`;
+    }
+    // Oracle uses :1, :2, ... bind variables
+    getPlaceholder(index) {
+        return `:${index}`;
+    }
+    fieldToSqlType(field) {
+        return ORACLE_TYPE_MAP[field.type] || 'VARCHAR2(4000)';
+    }
+    getIdColumnType() {
+        return 'VARCHAR2(36)';
+    }
+    getTableListQuery() {
+        return "SELECT table_name as name FROM user_tables";
+    }
+    /**
+     * Oracle keeps identifiers in their original case when CREATE TABLE quoted
+     * them with double-quotes ("users", "userId"). user_tab_columns stores them
+     * verbatim. Pass the table name as-is — the bound parameter is matched
+     * case-sensitively by Oracle.
+     */
+    /**
+     * Oracle-correct DROP TABLE :
+     * - `IF EXISTS` is not supported → wrap in PL/SQL block and ignore ORA-00942
+     * - cascade keyword is `CASCADE CONSTRAINTS`, not just `CASCADE`
+     * - `PURGE` skips the recycle bin so the table can be recreated immediately
+     */
+    /**
+     * Oracle a des transactions implicites — pas de SQL `BEGIN`. Le défaut
+     * `AbstractSqlDialect.beginSql()` retourne "BEGIN" qui est un opener
+     * PL/SQL → ORA-06550 PLS-00103. Override : skip BEGIN (return null).
+     *
+     * Oracle ne supporte que 2 niveaux d'isolation : READ COMMITTED (défaut)
+     * et SERIALIZABLE. Mapping ANSI 4-niveaux → 2-niveaux Oracle :
+     *   READ UNCOMMITTED → READ COMMITTED (alias raisonnable)
+     *   READ COMMITTED   → READ COMMITTED
+     *   REPEATABLE READ  → SERIALIZABLE (palier au-dessus)
+     *   SERIALIZABLE     → SERIALIZABLE
+     * Voir docs/ANOMALIES-LOT3-2026-05-25.md §5.
+     */
+    beginSql(opts) {
+        if (!opts?.isolation)
+            return null;
+        let level;
+        switch (opts.isolation) {
+            case 'READ UNCOMMITTED':
+            case 'READ COMMITTED':
+                level = 'READ COMMITTED';
+                break;
+            case 'REPEATABLE READ':
+            case 'SERIALIZABLE':
+                level = 'SERIALIZABLE';
+                break;
+            default:
+                this.log('TX', `isolation level '${opts.isolation}' non reconnu pour Oracle — fallback READ COMMITTED`);
+                level = 'READ COMMITTED';
+        }
+        return `SET TRANSACTION ISOLATION LEVEL ${level}`;
+    }
+    // Oracle supports SAVEPOINT and ROLLBACK TO SAVEPOINT, but NOT
+    // RELEASE SAVEPOINT — savepoints are implicitly released at COMMIT /
+    // ROLLBACK. Returning null turns RELEASE into a no-op.
+    savepointReleaseSql(_name) {
+        return null;
+    }
+    async dropTable(tableName) {
+        const sql = `BEGIN ` +
+            `  EXECUTE IMMEDIATE 'DROP TABLE ${this.quoteIdentifier(this.getPrefixedName(tableName))} CASCADE CONSTRAINTS PURGE'; ` +
+            `EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; ` +
+            `END;`;
+        await this.executeRun(sql, []);
+        this.log('DROP_TABLE', tableName);
+    }
+    async getExistingColumns(tableName) {
+        try {
+            // Oracle stores unquoted identifiers in upper case (USERS) and quoted
+            // identifiers verbatim ("users"). Match both : try the raw name first,
+            // then upper-case fallback if nothing came back.
+            // ALTER TABLE / introspection physiques → tablePrefix appliqué ici.
+            const physicalName = this.getPrefixedName(tableName);
+            const fetch = async (name) => this.executeQuery(`SELECT column_name FROM user_tab_columns WHERE table_name = :1`, [name]);
+            let rows = await fetch(physicalName);
+            if (rows.length === 0 && physicalName !== physicalName.toUpperCase()) {
+                rows = await fetch(physicalName.toUpperCase());
+            }
+            const set = new Set();
+            for (const r of rows) {
+                const c = (r.COLUMN_NAME ?? r.column_name);
+                if (c)
+                    set.add(c);
+            }
+            return set;
+        }
+        catch {
+            return new Set();
+        }
+    }
+    // --- Hooks ---
+    // Oracle prior to 23c doesn't support IF NOT EXISTS
+    supportsIfNotExists() { return false; }
+    supportsReturning() { return false; }
+    // Oracle: pass native Date objects — oracledb handles binding correctly
+    serializeDate(value) {
+        if (value === 'now' || value === '__MOSTA_NOW__')
+            return new Date();
+        if (value instanceof Date)
+            return value;
+        if (typeof value === 'string') {
+            const parsed = new Date(value);
+            if (!isNaN(parsed.getTime()))
+                return parsed;
+            return value;
+        }
+        return null;
+    }
+    // Oracle NUMBER(1): 1 = true, 0 = false
+    serializeBoolean(v) { return v ? 1 : 0; }
+    deserializeBoolean(v) {
+        return v === 1 || v === true || v === '1';
+    }
+    /** Oracle LIKE is case-sensitive — use UPPER() for case-insensitive search */
+    buildRegexCondition(col, flags) {
+        if (flags?.includes('i')) {
+            return `UPPER(${col}) LIKE UPPER(${this.nextPlaceholder()})`;
+        }
+        return `${col} LIKE ${this.nextPlaceholder()}`;
+    }
+    // Oracle uses OFFSET n ROWS FETCH FIRST m ROWS ONLY (12c+)
+    buildLimitOffset(options) {
+        if (!options?.limit && !options?.skip)
+            return '';
+        const offset = options.skip ?? 0;
+        const limit = options.limit;
+        let sql = ` OFFSET ${offset} ROWS`;
+        if (limit)
+            sql += ` FETCH FIRST ${limit} ROWS ONLY`;
+        return sql;
+    }
+    // Oracle: use PL/SQL block to check existence before CREATE TABLE
+    getCreateTablePrefix(tableName) {
+        const q = this.quoteIdentifier(this.getPrefixedName(tableName));
+        return `CREATE TABLE ${q}`;
+    }
+    getCreateIndexPrefix(indexName, unique) {
+        const u = unique ? 'UNIQUE ' : '';
+        return `CREATE ${u}INDEX ${this.quoteIdentifier(indexName)}`;
+    }
+    // --- Connection ---
+    async doConnect(config) {
+        try {
+            const oracledb = await import(/* webpackIgnore: true */ 'oracledb');
+            this.oracledb = oracledb.default || oracledb;
+            this.oracledb.outFormat = this.oracledb.OUT_FORMAT_OBJECT;
+            this.oracledb.autoCommit = true;
+            // Fetch CLOB columns as strings — without this, oracledb returns Lob objects
+            // that carry circular references (ConnectDescription) and break JSON.stringify()
+            const DB_TYPE_CLOB = this.oracledb.DB_TYPE_CLOB;
+            if (DB_TYPE_CLOB) {
+                this.oracledb.fetchAsString = [DB_TYPE_CLOB];
+            }
+            // Parse oracle:// URI to extract user, password, connectString
+            const poolOpts = {
+                poolMax: config.poolSize ?? 10,
+                poolMin: 2,
+            };
+            const uriMatch = config.uri.match(/^oracle:\/\/([^:]+):([^@]+)@(.+)$/);
+            if (uriMatch) {
+                poolOpts.user = uriMatch[1];
+                poolOpts.password = uriMatch[2];
+                poolOpts.connectString = uriMatch[3]; // host:port/service
+            }
+            else {
+                poolOpts.connectString = config.uri;
+            }
+            this.pool = await this.oracledb.createPool(poolOpts);
+        }
+        catch (e) {
+            throw new Error(`Oracle driver not found. Install it: npm install oracledb\n` +
+                `Original error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+    async doDisconnect() {
+        if (this.pool) {
+            await this.pool.close(0);
+            this.pool = null;
+        }
+    }
+    async doTestConnection() {
+        if (!this.pool)
+            return false;
+        const conn = await this.pool.getConnection();
+        try {
+            await conn.execute('SELECT 1 FROM DUAL');
+            return true;
+        }
+        finally {
+            await conn.close();
+        }
+    }
+    // --- Query execution ---
+    async doExecuteQuery(sql, params) {
+        if (!this.pool)
+            throw new Error('Oracle not connected. Call connect() first.');
+        const release = await this.acquireMutex();
+        try {
+            const conn = await this.pool.getConnection();
+            try {
+                const result = await conn.execute(sql, params);
+                const rows = result.rows ?? [];
+                // oracledb rows may carry internal driver objects (ConnectDescription etc.)
+                // with circular references — extract only own enumerable properties
+                // Oracle returns UPPERCASE column names — normalize to lowercase
+                // This is the Oracle normalizer: same principle as Mongo _id → id
+                return rows.map(row => {
+                    if (row && typeof row === 'object' && !Array.isArray(row)) {
+                        const clean = {};
+                        for (const [k, v] of Object.entries(row)) {
+                            clean[k.toLowerCase()] = v;
+                        }
+                        return clean;
+                    }
+                    return row;
+                });
+            }
+            finally {
+                await conn.close();
+            }
+        }
+        finally {
+            release();
+        }
+    }
+    async doExecuteRun(sql, params) {
+        if (!this.pool)
+            throw new Error('Oracle not connected. Call connect() first.');
+        const release = await this.acquireMutex();
+        try {
+            const conn = await this.pool.getConnection();
+            try {
+                const result = await conn.execute(sql, params);
+                return { changes: result.rowsAffected ?? 0 };
+            }
+            finally {
+                await conn.close();
+            }
+        }
+        finally {
+            release();
+        }
+    }
+    // Override initSchema to handle Oracle's lack of IF NOT EXISTS
+    async initSchema(schemas) {
+        this.schemas = schemas;
+        const strategy = this.config?.schemaStrategy ?? 'none';
+        this.log('INIT_SCHEMA', `strategy=${strategy}`, { entities: schemas.map(s => s.name) });
+        if (strategy === 'none')
+            return;
+        if (strategy === 'validate') {
+            for (const schema of schemas) {
+                const exists = await this.tableExists(schema.collection);
+                if (!exists) {
+                    throw new Error(`Schema validation failed: table "${schema.collection}" does not exist ` +
+                        `(entity: ${schema.name}). Set schemaStrategy to "update" or "create".`);
+                }
+            }
+            return;
+        }
+        // Hibernate hbm2ddl.auto=create-drop : DROP au boot ET au shutdown.
+        // Sans ce DROP au boot, le seed sur DB partagée trouve les anciennes lignes
+        // et croit que tout est déjà seedé (anomalie #14 — pre-2.2.9).
+        if (strategy === 'create-drop' || strategy === 'create') {
+            this.log('SCHEMA', 'create-drop boot — dropping registered schemas before re-create');
+            await this.dropSchema(schemas);
+        }
+        // For 'update' strategy: create tables only if they don't exist, and
+        // ALTER existing ones to add fields that appear in the schema but are
+        // missing from the live table.
+        for (const schema of schemas) {
+            const exists = await this.tableExists(schema.collection);
+            if (!exists) {
+                const createSql = this.generateCreateTable(schema);
+                this.log('DDL', schema.collection, createSql);
+                await this.executeRun(createSql, []);
+            }
+            else if (strategy === 'update') {
+                await this.addMissingColumns(schema);
+            }
+            // Indexes: check existence before creating
+            const indexStatements = this.generateIndexes(schema);
+            for (const stmt of indexStatements) {
+                try {
+                    await this.executeRun(stmt, []);
+                }
+                catch (e) {
+                    // Index may already exist — log au lieu de swallow.
+                    this.log('CREATE_INDEX', `skipped (may already exist): ${e.message}`);
+                }
+            }
+        }
+        // Junction tables
+        for (const schema of schemas) {
+            for (const [, rel] of Object.entries(schema.relations || {})) {
+                if (rel.type === 'many-to-many' && rel.through) {
+                    const exists = await this.tableExists(rel.through);
+                    if (exists)
+                        continue;
+                    const targetSchema = schemas.find(s => s.name === rel.target);
+                    if (!targetSchema)
+                        continue;
+                    const sourceKey = `${schema.name.toLowerCase()}Id`;
+                    const targetKey = `${rel.target.toLowerCase()}Id`;
+                    const q = (n) => this.quoteIdentifier(n);
+                    const idType = this.getIdColumnType();
+                    const ddl = `CREATE TABLE ${q(this.getPrefixedName(rel.through))} (
+  ${q(sourceKey)} ${idType} NOT NULL,
+  ${q(targetKey)} ${idType} NOT NULL,
+  PRIMARY KEY (${q(sourceKey)}, ${q(targetKey)})
+)`;
+                    this.log('DDL_JUNCTION', rel.through, ddl);
+                    await this.executeRun(ddl, []);
+                }
+            }
+        }
+    }
+    // Oracle returns column names in UPPERCASE by default
+    // Override count to handle CNT vs cnt
+    async count(schema, filter) {
+        this.resetParams();
+        const effectiveFilter = this.applySoftDeleteFilter(this.applyDiscriminator(filter, schema), schema);
+        const where = this.translateFilter(effectiveFilter, schema);
+        const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
+        const sql = `SELECT COUNT(*) as cnt FROM ${table} WHERE ${where.sql}`;
+        this.log('COUNT', schema.collection, { sql, params: where.params });
+        const rows = await this.executeQuery(sql, where.params);
+        if (rows.length === 0)
+            return 0;
+        // doExecuteQuery normalizes to lowercase
+        const row = rows[0];
+        const val = row.cnt ?? row['count(*)'] ?? row.CNT ?? row.COUNT;
+        return Number(val) || 0;
+    }
+    // Oracle column mapping: doExecuteQuery normalizes to lowercase,
+    // but camelCase fields (createdAt, updatedAt) arrive as createdat, updatedat.
+    // Map lowercase → original camelCase schema field names.
+    // IMPORTANT: only copy known fields — Oracle oracledb may attach internal
+    // objects (ConnectDescription, etc.) with circular references to result rows
+    deserializeRow(row, schema) {
+        if (!row)
+            return row;
+        // Build map: lowercase key → schema field name (camelCase)
+        const lowerToField = { id: 'id', createdat: 'createdAt', updatedat: 'updatedAt' };
+        for (const fieldName of Object.keys(schema.fields || {})) {
+            lowerToField[fieldName.toLowerCase()] = fieldName;
+        }
+        for (const [relName] of Object.entries(schema.relations || {})) {
+            lowerToField[relName.toLowerCase()] = relName;
+        }
+        const normalized = {};
+        for (const [key, value] of Object.entries(row)) {
+            const mapped = lowerToField[key] ?? lowerToField[key.toLowerCase()];
+            if (mapped) {
+                normalized[mapped] = value;
+            }
+        }
+        return super.deserializeRow(normalized, schema);
+    }
+    getDialectLabel() { return 'Oracle'; }
+}
+// ============================================================
+// Factory export
+// ============================================================
+export function createDialect() {
+    return new OracleDialect();
+}

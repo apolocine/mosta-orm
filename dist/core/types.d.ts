@@ -1,0 +1,419 @@
+export type FieldType = 'string' | 'text' | 'number' | 'boolean' | 'date' | 'json' | 'array';
+export interface FieldDef {
+    type: FieldType;
+    required?: boolean;
+    unique?: boolean;
+    sparse?: boolean;
+    default?: unknown;
+    enum?: string[];
+    lowercase?: boolean;
+    trim?: boolean;
+    arrayOf?: FieldType | EmbeddedSchemaDef;
+}
+/** Embedded sub-document (e.g. Activity.schedule[], SubscriptionPlan.activities[]) */
+export interface EmbeddedSchemaDef {
+    kind: 'embedded';
+    fields: Record<string, FieldDef>;
+}
+export type RelationType = 'one-to-one' | 'many-to-one' | 'one-to-many' | 'many-to-many';
+/** Cascade operations — equivalent to JPA CascadeType */
+export type CascadeType = 'persist' | 'merge' | 'remove' | 'all';
+/** Fetch strategy — equivalent to JPA FetchType */
+export type FetchType = 'lazy' | 'eager';
+/** Referential action on delete — equivalent to SQL ON DELETE */
+export type OnDeleteAction = 'cascade' | 'set-null' | 'restrict' | 'no-action';
+export interface RelationDef {
+    /** Target entity name (e.g. 'User', 'Client') */
+    target: string;
+    type: RelationType;
+    required?: boolean;
+    /** Default fields to select when populating/joining */
+    select?: string[];
+    /** Whether this relation can be null */
+    nullable?: boolean;
+    /** Junction table name (SQL dialects) — convention: "{source}_{target}" in snake_case */
+    through?: string;
+    /**
+     * Cascade operations to propagate to related entities.
+     * Equivalent to JPA @OneToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE})
+     * WARNING: never use 'remove' or 'all' on many-to-many (would delete the target entity!)
+     */
+    cascade?: CascadeType[];
+    /**
+     * Remove orphaned entities when detached from the collection.
+     * Equivalent to JPA @OneToMany(orphanRemoval = true)
+     * Only supported on one-to-one and one-to-many (not many-to-many, like Hibernate).
+     */
+    orphanRemoval?: boolean;
+    /**
+     * Fetch strategy: eager (load immediately) or lazy (load on demand).
+     * Equivalent to JPA @ManyToOne(fetch = FetchType.LAZY)
+     * Defaults: many-to-one/one-to-one = eager, one-to-many/many-to-many = lazy
+     */
+    fetch?: FetchType;
+    /**
+     * Inverse field name on the target entity (bidirectional relation).
+     * Equivalent to JPA @OneToMany(mappedBy = "parent")
+     * For one-to-many: specifies the FK column name on the child table.
+     * Without mappedBy, O2M is unidirectional (Hibernate creates a junction table = anti-pattern).
+     */
+    mappedBy?: string;
+    /**
+     * Explicit FK column name on the owning side.
+     * Equivalent to JPA @JoinColumn(name = "category_id")
+     * Default: relation field name (e.g. 'category' → column 'category')
+     */
+    joinColumn?: string;
+    /**
+     * Explicit FK column name on the inverse side of a junction table (M2M only).
+     * Equivalent to JPA @JoinTable(inverseJoinColumns = @JoinColumn(name = "course_id"))
+     */
+    inverseJoinColumn?: string;
+    /**
+     * Referential action when the referenced entity is deleted.
+     * Equivalent to SQL ON DELETE CASCADE / SET NULL / RESTRICT
+     * Default: nullable ? 'set-null' : 'restrict'
+     */
+    onDelete?: OnDeleteAction;
+}
+export type IndexType = 'asc' | 'desc' | 'text';
+export interface IndexDef {
+    /**
+     * Index columns. Canonical form is an object mapping column → direction
+     * (`{ email: 'asc' }`). The array shorthand (`['email']`, all ascending) is
+     * also accepted — it is the shape most AI code generators emit. Both are
+     * normalized via {@link normalizeIndexFields} before SQL/Mongo generation.
+     */
+    fields: Record<string, IndexType> | string[];
+    unique?: boolean;
+    sparse?: boolean;
+}
+/**
+ * Normalize an index `fields` spec to the canonical object form.
+ *
+ * Accepts the array shorthand `['email', 'name']` (commonly emitted by AI code
+ * generators / LLMs) and maps each entry to ascending order. Idempotent on the
+ * object form.
+ *
+ * Fixes the latent bug where `Object.entries(['email'])` yielded a column named
+ * `"0"` — silently tolerated by SQLite (a double-quoted unknown identifier is
+ * reinterpreted as a string literal) but rejected by strict engines
+ * (PostgreSQL / PGlite: `column "0" does not exist`).
+ * See docs/ANOMALIES-LOT3-2026-05-25.md §17.
+ */
+export declare function normalizeIndexFields(fields: Record<string, IndexType> | string[] | undefined): Record<string, IndexType>;
+export interface EntitySchema {
+    /** Entity name (PascalCase, e.g. 'Client') */
+    name: string;
+    /** Collection/table name (e.g. 'clients') */
+    collection: string;
+    /** Field definitions */
+    fields: Record<string, FieldDef>;
+    /** Relations to other entities */
+    relations: Record<string, RelationDef>;
+    /** Database indexes */
+    indexes: IndexDef[];
+    /** Auto-manage createdAt/updatedAt */
+    timestamps: boolean;
+    /** Discriminator field name (e.g. '_type'). If set, enables single-table mode. */
+    discriminator?: string;
+    /** Discriminator value for this entity (e.g. 'article'). Used to filter rows in a shared table. */
+    discriminatorValue?: string;
+    /** Enable soft delete (adds deletedAt field, auto-filters on find) */
+    softDelete?: boolean;
+}
+export interface FilterOperator {
+    $eq?: unknown;
+    $ne?: unknown;
+    $gt?: unknown;
+    $gte?: unknown;
+    $lt?: unknown;
+    $lte?: unknown;
+    $in?: unknown[];
+    $nin?: unknown[];
+    $regex?: string;
+    $regexFlags?: string;
+    $exists?: boolean;
+}
+export type FilterValue = unknown | FilterOperator;
+export interface FilterQuery {
+    [field: string]: FilterValue;
+    $or?: FilterQuery[];
+    $and?: FilterQuery[];
+}
+export type SortDirection = 1 | -1;
+export interface QueryOptions {
+    sort?: Record<string, SortDirection>;
+    skip?: number;
+    limit?: number;
+    /** Fields to include in result (projection) */
+    select?: string[];
+    /** Fields to exclude from result */
+    exclude?: string[];
+    /**
+     * Soft-delete : si `true`, les lignes avec `deletedAt != null` sont
+     * incluses dans le résultat. Si `false` ou absent, le filtre automatique
+     * `deletedAt IS NULL` (SQL) / `deletedAt: null` (Mongo) reste appliqué.
+     * Sans effet sur les schémas sans `softDelete: true`.
+     * Voir docs/ANOMALIES-LOT3-2026-05-25.md §1.
+     */
+    includeDeleted?: boolean;
+}
+export interface PaginatedResult<T> {
+    data: T[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+}
+export interface AggregateGroupStage {
+    $group: {
+        _by: string | null;
+        [field: string]: AggregateAccumulator | string | null;
+    };
+}
+export interface AggregateAccumulator {
+    $sum?: number | string;
+    $count?: true;
+    $avg?: string;
+    $min?: string;
+    $max?: string;
+}
+export interface AggregateMatchStage {
+    $match: FilterQuery;
+}
+export interface AggregateSortStage {
+    $sort: Record<string, SortDirection>;
+}
+export interface AggregateLimitStage {
+    $limit: number;
+}
+export type AggregateStage = AggregateMatchStage | AggregateGroupStage | AggregateSortStage | AggregateLimitStage;
+export type DialectType = 'mongodb' | 'sqlite' | 'sqljs' | 'postgres' | 'pglite' | 'mysql' | 'mariadb' | 'oracle' | 'mssql' | 'cockroachdb' | 'db2' | 'hana' | 'hsqldb' | 'spanner' | 'sybase' | 'duckdb';
+/**
+ * Schema generation strategy (inspired by hibernate.hbm2ddl.auto)
+ *
+ *   validate     : validate schema, make no changes (production)
+ *   update       : update schema to match entities (dev)
+ *   create       : drop and recreate schema on startup
+ *   create-drop  : drop schema on shutdown
+ *   none         : do nothing
+ */
+export type SchemaStrategy = 'validate' | 'update' | 'create' | 'create-drop' | 'none';
+/**
+ * Connection configuration — inspired by Hibernate persistence.xml
+ *
+ * Equivalent persistence.xml properties :
+ *   jakarta.persistence.jdbc.url     → uri
+ *   hibernate.dialect                → dialect
+ *   hibernate.show_sql               → showSql
+ *   hibernate.format_sql             → formatSql
+ *   hibernate.highlight_sql          → highlightSql
+ *   hibernate.hbm2ddl.auto           → schemaStrategy
+ *   hibernate.connection.pool_size   → poolSize
+ *   hibernate.cache.use_second_level → cacheEnabled
+ *   hibernate.default_batch_fetch_size → batchSize
+ */
+export interface ConnectionConfig {
+    dialect: DialectType;
+    uri: string;
+    /** Log generated queries to console (default: false) */
+    showSql?: boolean;
+    /** Pretty-print logged queries (default: false) */
+    formatSql?: boolean;
+    /** Colorize SQL keywords in terminal output (default: false) */
+    highlightSql?: boolean;
+    /** Schema generation strategy (default: 'none') */
+    schemaStrategy?: SchemaStrategy;
+    /**
+     * Préfixe optionnel appliqué à tous les noms de tables/collections au
+     * runtime. Équivalent Hibernate `hibernate.physical_naming_strategy`.
+     * Utile pour cohabiter plusieurs apps sur le même DB partagé (ex.
+     * `DB_TABLE_PREFIX=mp_` → `users` devient `mp_users`).
+     *
+     * Lu de l'env `DB_TABLE_PREFIX` par `getConfigFromEnv()`. Si vide ou
+     * absent, aucun préfixe (backward-compatible).
+     *
+     * NOTE : ne s'applique PAS aux schémas register : les utilisateurs
+     * continuent à déclarer `collection: 'users'`. Le préfixe est appliqué
+     * en interne par le dialect au moment des opérations SQL/Mongo.
+     */
+    tablePrefix?: string;
+    /** Max connections in pool (default: dialect-specific) */
+    poolSize?: number;
+    /** Enable query result caching (default: false) */
+    cacheEnabled?: boolean;
+    /** Cache TTL in seconds (default: 60) */
+    cacheTtlSeconds?: number;
+    /** Default batch size for bulk operations (default: 25) */
+    batchSize?: number;
+    /** Additional dialect-specific options */
+    options?: Record<string, unknown>;
+}
+/**
+ * Opaque handle returned by `dialect.beginTx()`. Pass it back to
+ * `dialect.commitTx(tx)` or `dialect.rollbackTx(tx)` to close the
+ * transaction.
+ *
+ * Supports nested transactions via SAVEPOINTs : when `beginTx` is called
+ * while another transaction is already open on the same dialect, a new
+ * SAVEPOINT is emitted instead of a nested BEGIN (which would be
+ * rejected by most engines). `commitTx` then emits RELEASE SAVEPOINT
+ * for inner levels and COMMIT only for the outermost one. Same logic for
+ * rollback (ROLLBACK TO SAVEPOINT vs ROLLBACK).
+ */
+export interface TxHandle {
+    readonly id: string;
+    /** Wall-clock start (epoch ms) — useful for lag logging */
+    readonly startedAt: number;
+    /** 1 = outermost (real BEGIN/COMMIT), 2+ = nested (SAVEPOINT) */
+    readonly depth: number;
+    /** Savepoint name (only set for nested transactions, depth > 1) */
+    readonly savepointName?: string;
+    /** Internal : opaque payload carried by dialects that need pool client refs */
+    readonly _internal?: Record<string, unknown>;
+}
+export interface IDialect {
+    readonly dialectType: DialectType;
+    connect(config: ConnectionConfig): Promise<void>;
+    disconnect(): Promise<void>;
+    testConnection(): Promise<boolean>;
+    initSchema(schemas: EntitySchema[]): Promise<void>;
+    find<T = Record<string, unknown>>(schema: EntitySchema, filter: FilterQuery, options?: QueryOptions): Promise<T[]>;
+    findOne<T = Record<string, unknown>>(schema: EntitySchema, filter: FilterQuery, options?: QueryOptions): Promise<T | null>;
+    findById<T = Record<string, unknown>>(schema: EntitySchema, id: string, options?: QueryOptions): Promise<T | null>;
+    create<T = Record<string, unknown>>(schema: EntitySchema, data: Record<string, unknown>): Promise<T>;
+    update<T = Record<string, unknown>>(schema: EntitySchema, id: string, data: Record<string, unknown>): Promise<T | null>;
+    updateMany(schema: EntitySchema, filter: FilterQuery, data: Record<string, unknown>): Promise<number>;
+    delete(schema: EntitySchema, id: string): Promise<boolean>;
+    deleteMany(schema: EntitySchema, filter: FilterQuery): Promise<number>;
+    count(schema: EntitySchema, filter: FilterQuery, options?: QueryOptions): Promise<number>;
+    distinct(schema: EntitySchema, field: string, filter: FilterQuery, options?: QueryOptions): Promise<unknown[]>;
+    aggregate<T = Record<string, unknown>>(schema: EntitySchema, stages: AggregateStage[], options?: QueryOptions): Promise<T[]>;
+    findWithRelations<T = Record<string, unknown>>(schema: EntitySchema, filter: FilterQuery, relations: string[], options?: QueryOptions): Promise<T[]>;
+    findByIdWithRelations<T = Record<string, unknown>>(schema: EntitySchema, id: string, relations: string[], options?: QueryOptions): Promise<T | null>;
+    upsert<T = Record<string, unknown>>(schema: EntitySchema, filter: FilterQuery, data: Record<string, unknown>): Promise<T>;
+    increment(schema: EntitySchema, id: string, field: string, amount: number): Promise<Record<string, unknown>>;
+    addToSet(schema: EntitySchema, id: string, field: string, value: unknown): Promise<Record<string, unknown> | null>;
+    pull(schema: EntitySchema, id: string, field: string, value: unknown): Promise<Record<string, unknown> | null>;
+    search<T = Record<string, unknown>>(schema: EntitySchema, query: string, fields: string[], options?: QueryOptions): Promise<T[]>;
+    /** Execute a raw SELECT query and return rows */
+    executeQuery?<T = Record<string, unknown>>(sql: string, params: unknown[]): Promise<T[]>;
+    /** Execute a raw non-SELECT statement (INSERT, UPDATE, DELETE) */
+    executeRun?(sql: string, params: unknown[]): Promise<{
+        changes: number;
+    }>;
+    /**
+     * Run `cb` inside a database transaction. On SQL dialects this wraps the
+     * callback in `BEGIN` / `COMMIT` (or `ROLLBACK` if the callback throws).
+     * On MongoDB, a replica-set session is used. On non-transactional or
+     * unsupported dialects, the callback is executed pass-through (non-atomic)
+     * and a warning is logged once per process.
+     *
+     * The callback receives the same dialect instance it was called on, so
+     * existing query code keeps working without changes.
+     *
+     * **Note on pooled SQL dialects** (Postgres, MySQL, MariaDB, MSSQL, …) :
+     * without per-dialect client checkout, parallel queries inside the callback
+     * may be dispatched on different pool connections. For strict correctness
+     * under concurrent load, set `poolSize: 1` on those dialects, or use a
+     * dialect that implements a scoped override of this method.
+     */
+    $transaction?<T>(cb: (tx: IDialect) => Promise<T>, opts?: {
+        isolation?: 'READ UNCOMMITTED' | 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE';
+    }): Promise<T>;
+    /**
+     * **Manual transaction API (since 1.11.0, experimental).**
+     *
+     * Use this trio when the `$transaction(cb)` callback pattern is too
+     * restrictive — for instance when your transaction spans several
+     * unrelated functions, or when COMMIT/ROLLBACK depends on an external
+     * event that doesn't fit in a single callback.
+     *
+     * ```ts
+     * const tx = await dialect.beginTx();
+     * try {
+     *   await dialect.create(UserSchema, { email: 'a@b.c' });
+     *   await doSomethingElse();                       // external flow
+     *   if (shouldKeep) await dialect.commitTx(tx);
+     *   else            await dialect.rollbackTx(tx);
+     * } catch (e) {
+     *   await dialect.rollbackTx(tx);
+     *   throw e;
+     * }
+     * ```
+     *
+     * The same pool-awareness caveat applies as for `$transaction` : on
+     * pooled SQL dialects, queries between `beginTx` and `commitTx` may
+     * hit different pool clients unless `poolSize: 1`. Strict correctness
+     * requires dialect-specific overrides (planned 1.12).
+     *
+     * MongoDB : not implemented in 1.11 — use `$transaction(cb)` instead
+     * (session threading through every op is non-trivial).
+     */
+    beginTx?(opts?: {
+        isolation?: 'READ UNCOMMITTED' | 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE';
+    }): Promise<TxHandle>;
+    commitTx?(tx: TxHandle): Promise<void>;
+    rollbackTx?(tx: TxHandle): Promise<void>;
+    /** Drop a single table by name */
+    dropTable?(tableName: string): Promise<void>;
+    /** Drop all tables in the database (dangerous) */
+    dropAllTables?(): Promise<void>;
+    /** Drop tables for registered schemas + their junction tables */
+    dropSchema?(schemas: EntitySchema[]): Promise<string[]>;
+    /** Truncate (empty) a single table — keeps structure, deletes data */
+    truncateTable?(tableName: string): Promise<void>;
+    /** Truncate all registered schema tables — keeps structure, deletes data */
+    truncateAll?(schemas: EntitySchema[]): Promise<string[]>;
+}
+export interface IRepository<T> {
+    findAll(filter?: FilterQuery, options?: QueryOptions): Promise<T[]>;
+    findOne(filter: FilterQuery, options?: QueryOptions): Promise<T | null>;
+    findById(id: string, options?: QueryOptions): Promise<T | null>;
+    findByIdWithRelations(id: string, relations?: string[], options?: QueryOptions): Promise<T | null>;
+    create(data: Partial<T>): Promise<T>;
+    update(id: string, data: Partial<T>): Promise<T | null>;
+    updateMany(filter: FilterQuery, data: Partial<T>): Promise<number>;
+    delete(id: string): Promise<boolean>;
+    deleteMany(filter: FilterQuery): Promise<number>;
+    count(filter?: FilterQuery, options?: QueryOptions): Promise<number>;
+    search(query: string, options?: QueryOptions): Promise<T[]>;
+    distinct(field: string, filter?: FilterQuery, options?: QueryOptions): Promise<unknown[]>;
+    aggregate<R = Record<string, unknown>>(stages: AggregateStage[]): Promise<R[]>;
+    upsert(filter: FilterQuery, data: Partial<T>): Promise<T>;
+    increment(id: string, field: string, amount: number): Promise<T | null>;
+    addToSet(id: string, field: string, value: unknown): Promise<T | null>;
+    pull(id: string, field: string, value: unknown): Promise<T | null>;
+    findWithRelations(filter: FilterQuery, relations: string[], options?: QueryOptions): Promise<T[]>;
+}
+export interface HookContext {
+    entity: EntitySchema;
+    dialect: DialectType;
+    operation: 'create' | 'update' | 'delete' | 'find';
+    userId?: string;
+}
+export interface IPlugin {
+    name: string;
+    /** Modify the schema at boot time (add fields, indexes...) */
+    onSchemaInit?(schema: EntitySchema): EntitySchema;
+    /** Before insert */
+    preSave?(doc: Record<string, unknown>, ctx: HookContext): Promise<Record<string, unknown>> | Record<string, unknown>;
+    /** After insert */
+    postSave?(doc: Record<string, unknown>, ctx: HookContext): Promise<void> | void;
+    /** Before update */
+    preUpdate?(id: string, data: Record<string, unknown>, ctx: HookContext): Promise<Record<string, unknown>> | Record<string, unknown>;
+    /** After update */
+    postUpdate?(doc: Record<string, unknown>, ctx: HookContext): Promise<void> | void;
+    /** Before delete */
+    preDelete?(id: string, ctx: HookContext): Promise<void> | void;
+    /** Transform queries (e.g. soft-delete auto-filter) */
+    onQuery?(filter: FilterQuery, ctx: HookContext): FilterQuery;
+    /** Transform results (e.g. normalization) */
+    onResult?(doc: Record<string, unknown>, ctx: HookContext): Record<string, unknown>;
+}
+/** Normalized document: id (string) instead of _id */
+export interface NormalizedDoc {
+    id: string;
+    [key: string]: unknown;
+}

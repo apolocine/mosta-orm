@@ -1,0 +1,795 @@
+// MongoDB Dialect - Wraps Mongoose to implement IDialect
+// Equivalent to org.hibernate.dialect.MongoDBDialect
+// Author: Dr Hamid MADANI drmdh@msn.com
+import mongoose, { Schema } from 'mongoose';
+import { normalizeIndexFields } from '../core/types.js';
+// ============================================================
+// Model Registry — lazy-built from EntitySchema definitions
+// ============================================================
+const modelCache = new Map();
+/**
+ * Get or build a Mongoose model from an EntitySchema.
+ * Models are cached per entity name + prefix (singleton par couple).
+ *
+ * `tablePrefix` (optionnel) est concaténé à `schema.collection` au moment de
+ * la création du modèle mongoose — équivalent du préfixe table en SQL.
+ */
+function getModel(schema, tablePrefix) {
+    const cacheKey = `${tablePrefix ?? ''}:${schema.name}`;
+    if (modelCache.has(cacheKey)) {
+        return modelCache.get(cacheKey);
+    }
+    const physicalCollection = `${tablePrefix ?? ''}${schema.collection}`;
+    // Return existing registered model if available (mongoose key = schema.name
+    // donc partagé entre préfixes — on n'utilise mongoose.models que si la
+    // collection physique correspond ; sinon on instancie un nouveau model).
+    const existing = mongoose.models[schema.name];
+    if (existing && existing.collection?.name === physicalCollection) {
+        modelCache.set(cacheKey, existing);
+        return existing;
+    }
+    const mongSchema = buildMongooseSchema(schema);
+    // Si un modèle existe déjà sous schema.name pour une AUTRE collection, on
+    // crée un nom unique pour ne pas le supplanter (cas rare : changement de
+    // tablePrefix au runtime sans clearRegistry).
+    const modelName = existing && existing.collection?.name !== physicalCollection
+        ? `${schema.name}__${tablePrefix ?? ''}`
+        : schema.name;
+    const model = mongoose.model(modelName, mongSchema, physicalCollection);
+    modelCache.set(cacheKey, model);
+    return model;
+}
+/**
+ * Build a Mongoose Schema from an EntitySchema definition.
+ * Translates our generic FieldDef → Mongoose SchemaType.
+ */
+function buildMongooseSchema(entity) {
+    const definition = {};
+    // Pré-calcul : noms de fields déjà couverts par un index unique single-field
+    // dans `entity.indexes`. Pour ces fields, on N'EMET PAS `unique:true` côté
+    // schemaDef (sinon mongoose crée 2 fois le même index, ce qui produit
+    // IndexKeySpecsConflict au boot). L'index explicite de `entity.indexes`
+    // (avec ses options sparse, partial, etc.) prend le relais.
+    // Voir docs/ANOMALIES-LOT3-2026-05-25.md §12.
+    const fieldsCoveredByUniqueIndex = new Set();
+    for (const idx of (entity.indexes || [])) {
+        if (!idx.unique)
+            continue;
+        const fieldNames = Object.keys(normalizeIndexFields(idx.fields));
+        if (fieldNames.length === 1) {
+            fieldsCoveredByUniqueIndex.add(fieldNames[0]);
+        }
+    }
+    // --- Fields ---
+    for (const [name, field] of Object.entries(entity.fields)) {
+        const schemaDef = {};
+        // Type mapping
+        switch (field.type) {
+            case 'string':
+                schemaDef.type = String;
+                break;
+            case 'text':
+                schemaDef.type = String;
+                break;
+            case 'number':
+                schemaDef.type = Number;
+                break;
+            case 'boolean':
+                schemaDef.type = Boolean;
+                break;
+            case 'date':
+                schemaDef.type = Date;
+                break;
+            case 'json':
+                schemaDef.type = Schema.Types.Mixed;
+                break;
+            case 'array': {
+                if (!field.arrayOf) {
+                    schemaDef.type = [Schema.Types.Mixed];
+                }
+                else if (typeof field.arrayOf === 'string') {
+                    // Primitive array
+                    const typeMap = {
+                        string: String, number: Number, boolean: Boolean, date: Date,
+                    };
+                    schemaDef.type = [typeMap[field.arrayOf] || Schema.Types.Mixed];
+                }
+                else if (field.arrayOf.kind === 'embedded') {
+                    // Embedded subdocument array
+                    const subFields = {};
+                    for (const [sf, sd] of Object.entries(field.arrayOf.fields)) {
+                        const typeMap = {
+                            string: String, number: Number, boolean: Boolean, date: Date,
+                        };
+                        subFields[sf] = {
+                            type: typeMap[sd.type] || Schema.Types.Mixed,
+                            ...(sd.required && { required: true }),
+                            ...(sd.default !== undefined && { default: sd.default }),
+                        };
+                    }
+                    schemaDef.type = [new Schema(subFields, { _id: false })];
+                }
+                if (field.default === undefined)
+                    schemaDef.default = undefined;
+                break;
+            }
+        }
+        if (field.required)
+            schemaDef.required = true;
+        if (field.unique && !fieldsCoveredByUniqueIndex.has(name)) {
+            // Skip si déjà couvert par un index unique explicite dans `entity.indexes`
+            // (sinon mongoose lève IndexKeySpecsConflict). Cf. §12.
+            schemaDef.unique = true;
+            // MongoDB treats null as a value in unique indexes — if the field
+            // is not required, auto-enable sparse so multiple nulls are allowed.
+            if (!field.required)
+                schemaDef.sparse = true;
+        }
+        if (field.sparse)
+            schemaDef.sparse = true;
+        if (field.lowercase)
+            schemaDef.lowercase = true;
+        if (field.trim)
+            schemaDef.trim = true;
+        if (field.enum)
+            schemaDef.enum = field.enum;
+        if (field.default !== undefined && field.type !== 'array') {
+            schemaDef.default = (field.default === 'now' || field.default === '__MOSTA_NOW__') ? Date.now : field.default;
+        }
+        definition[name] = schemaDef;
+    }
+    // --- Relations → refs ---
+    // Use Schema.Types.Mixed instead of ObjectId for FK fields so that
+    // both MongoDB ObjectIds AND UUID strings (from SQL dialects) are
+    // accepted. This is critical for cross-dialect replication where the
+    // source DB uses UUIDs (SQLite, Postgres, etc.) and the target is Mongo.
+    for (const [name, rel] of Object.entries(entity.relations)) {
+        if (rel.type === 'one-to-many' || rel.type === 'many-to-many') {
+            definition[name] = [{ type: Schema.Types.Mixed, ref: rel.target }];
+        }
+        else {
+            definition[name] = {
+                type: Schema.Types.Mixed,
+                ref: rel.target,
+                ...(rel.required && { required: true }),
+                ...(rel.nullable && { default: null }),
+            };
+        }
+    }
+    // --- Discriminator field ---
+    if (entity.discriminator) {
+        definition[entity.discriminator] = {
+            type: String,
+            required: true,
+            ...(entity.discriminatorValue && { default: entity.discriminatorValue }),
+        };
+    }
+    // --- Soft-delete field ---
+    if (entity.softDelete) {
+        definition['deletedAt'] = { type: Date, default: null };
+    }
+    const mongoSchema = new Schema(definition, {
+        timestamps: entity.timestamps,
+        collection: entity.collection,
+    });
+    // --- Indexes ---
+    for (const idx of entity.indexes) {
+        const mongoIndex = {};
+        for (const [field, dir] of Object.entries(normalizeIndexFields(idx.fields))) {
+            if (dir === 'text')
+                mongoIndex[field] = 'text';
+            else if (dir === 'desc')
+                mongoIndex[field] = -1;
+            else
+                mongoIndex[field] = 1;
+        }
+        mongoSchema.index(mongoIndex, {
+            ...(idx.unique && { unique: true }),
+            ...(idx.sparse && { sparse: true }),
+        });
+    }
+    return mongoSchema;
+}
+// ============================================================
+// Query Translation — DAL FilterQuery → Mongoose filter
+// ============================================================
+/**
+ * Translate a DAL FilterQuery to a Mongoose-compatible filter object.
+ */
+function translateFilter(filter) {
+    const result = {};
+    for (const [key, value] of Object.entries(filter)) {
+        if (key === '$or' && Array.isArray(value)) {
+            result.$or = value.map(translateFilter);
+        }
+        else if (key === '$and' && Array.isArray(value)) {
+            result.$and = value.map(translateFilter);
+        }
+        else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+            // FilterOperator
+            const op = value;
+            const mongoOp = {};
+            if ('$eq' in op)
+                mongoOp.$eq = op.$eq;
+            if ('$ne' in op)
+                mongoOp.$ne = op.$ne;
+            if ('$gt' in op)
+                mongoOp.$gt = op.$gt;
+            if ('$gte' in op)
+                mongoOp.$gte = op.$gte;
+            if ('$lt' in op)
+                mongoOp.$lt = op.$lt;
+            if ('$lte' in op)
+                mongoOp.$lte = op.$lte;
+            if ('$in' in op)
+                mongoOp.$in = op.$in;
+            if ('$nin' in op)
+                mongoOp.$nin = op.$nin;
+            if ('$exists' in op)
+                mongoOp.$exists = op.$exists;
+            if ('$regex' in op) {
+                mongoOp.$regex = op.$regex;
+                if (op.$regexFlags)
+                    mongoOp.$options = op.$regexFlags;
+            }
+            // If no operator keys matched, pass through as-is (raw Mongoose filter)
+            result[key] = Object.keys(mongoOp).length > 0 ? mongoOp : value;
+        }
+        else {
+            result[key] = value;
+        }
+    }
+    return result;
+}
+/**
+ * Apply QueryOptions to a Mongoose query chain.
+ */
+function applyOptions(query, options) {
+    if (!options)
+        return query;
+    if (options.sort)
+        query = query.sort(options.sort);
+    if (options.skip)
+        query = query.skip(options.skip);
+    if (options.limit)
+        query = query.limit(options.limit);
+    if (options.select)
+        query = query.select(options.select.join(' '));
+    if (options.exclude)
+        query = query.select(options.exclude.map((f) => `-${f}`).join(' '));
+    return query;
+}
+// ============================================================
+// SQL Logging — inspired by hibernate.show_sql / hibernate.format_sql
+// ============================================================
+let showSql = false;
+let formatSql = false;
+let highlightEnabled = false;
+// ANSI colors
+const C = {
+    reset: '\x1b[0m',
+    dim: '\x1b[2m',
+    cyan: '\x1b[36m',
+    green: '\x1b[32m',
+    magenta: '\x1b[35m',
+    blue: '\x1b[34m',
+    gray: '\x1b[90m',
+};
+function logQuery(operation, collection, details) {
+    if (!showSql)
+        return;
+    const prefix = highlightEnabled
+        ? `${C.dim}[DAL:${C.cyan}MongoDB${C.dim}]${C.reset} ${C.blue}${operation}${C.reset} ${C.green}${collection}${C.reset}`
+        : `[DAL:MongoDB] ${operation} ${collection}`;
+    if (formatSql && details) {
+        console.log(prefix);
+        console.log(JSON.stringify(details, null, 2));
+    }
+    else if (details) {
+        console.log(`${prefix} ${JSON.stringify(details)}`);
+    }
+    else {
+        console.log(prefix);
+    }
+}
+// ============================================================
+// Discriminator + soft-delete helpers
+// ============================================================
+function applyDiscriminator(filter, schema) {
+    if (!schema.discriminator || !schema.discriminatorValue)
+        return filter;
+    return { ...filter, [schema.discriminator]: schema.discriminatorValue };
+}
+function applyDiscriminatorToData(data, schema) {
+    if (!schema.discriminator || !schema.discriminatorValue)
+        return data;
+    return { ...data, [schema.discriminator]: schema.discriminatorValue };
+}
+/**
+ * Bypass explicite : `options.includeDeleted === true` retourne le filter inchangé.
+ * Voir docs/ANOMALIES-LOT3-2026-05-25.md §1.
+ */
+function applySoftDeleteFilter(filter, schema, options) {
+    if (!schema.softDelete)
+        return filter;
+    if (options?.includeDeleted === true)
+        return filter;
+    if ('deletedAt' in filter)
+        return filter;
+    return { ...filter, deletedAt: { $eq: null } };
+}
+function applyAllFilters(filter, schema, options) {
+    return applySoftDeleteFilter(applyDiscriminator(filter, schema), schema, options);
+}
+// ============================================================
+// MongoDialect — implements IDialect
+// ============================================================
+class MongoDialect {
+    dialectType = 'mongodb';
+    config = null;
+    // Mongo normalizer: _id → id, remove __v (same principle as Oracle uppercase normalizer)
+    normalize(doc) {
+        if (!doc)
+            return doc;
+        if (Array.isArray(doc))
+            return doc.map(d => this.normalize(d));
+        if (typeof doc === 'object' && doc !== null) {
+            const { _id, __v, ...rest } = doc;
+            const id = _id?.toString?.() ?? _id ?? rest.id;
+            // Recursively normalize populated sub-documents
+            for (const key of Object.keys(rest)) {
+                const val = rest[key];
+                if (val && typeof val === 'object' && !Array.isArray(val) && val._id !== undefined) {
+                    rest[key] = this.normalize(val);
+                }
+                else if (Array.isArray(val)) {
+                    rest[key] = val.map(item => item && typeof item === 'object' && item._id !== undefined
+                        ? this.normalize(item) : item);
+                }
+            }
+            return { id, ...rest };
+        }
+        return doc;
+    }
+    async connect(config) {
+        this.config = config;
+        showSql = config.showSql ?? false;
+        formatSql = config.formatSql ?? false;
+        highlightEnabled = config.highlightSql ?? false;
+        const options = {
+            bufferCommands: false,
+        };
+        // hibernate.connection.pool_size equivalent
+        if (config.poolSize) {
+            options.maxPoolSize = config.poolSize;
+        }
+        // Reuse existing connection if already connected
+        if (mongoose.connection.readyState === 1) {
+            logQuery('REUSE', 'connection');
+            return;
+        }
+        await mongoose.connect(config.uri, options);
+        logQuery('CONNECT', config.uri.replace(/\/\/.*@/, '//<credentials>@'));
+        // hibernate.hbm2ddl.auto equivalent
+        if (config.schemaStrategy === 'create') {
+            logQuery('SCHEMA', 'create — dropping existing collections');
+            await mongoose.connection.db.dropDatabase();
+        }
+    }
+    async disconnect() {
+        // hibernate.hbm2ddl.auto=create-drop
+        if (this.config?.schemaStrategy === 'create-drop') {
+            logQuery('SCHEMA', 'create-drop — dropping database on shutdown');
+            await mongoose.connection.db.dropDatabase();
+        }
+        modelCache.clear();
+        // Clear mongoose model registry to allow clean reconnection
+        for (const name of Object.keys(mongoose.models)) {
+            delete mongoose.models[name];
+        }
+        for (const name of mongoose.modelNames()) {
+            mongoose.deleteModel(name);
+        }
+        await mongoose.disconnect();
+        logQuery('DISCONNECT', '');
+    }
+    async testConnection() {
+        try {
+            if (mongoose.connection.readyState !== 1)
+                return false;
+            await mongoose.connection.db.admin().ping();
+            return true;
+        }
+        catch (e) {
+            // scan-ignore: testConnection retourne explicitement boolean — false=down
+            logQuery('TEST_CONNECTION', `down: ${e.message}`);
+            return false;
+        }
+    }
+    // --- Schema management (hibernate.hbm2ddl.auto) ---
+    async initSchema(schemas) {
+        const strategy = this.config?.schemaStrategy ?? 'none';
+        logQuery('INIT_SCHEMA', `strategy=${strategy}`, { entities: schemas.map(s => s.name) });
+        // Anomalie #14 (fix 2.2.9) : create-drop = DROP au boot + DROP au shutdown.
+        // Symétrique du DROP de shutdown ligne 371 — sans ce drop boot, un seed
+        // sur DB partagée trouve les anciennes collections et croit que tout est seedé.
+        if (strategy === 'create-drop' || strategy === 'create') {
+            logQuery('SCHEMA', 'create-drop boot — dropping registered collections before re-create');
+            await this.dropSchema(schemas);
+        }
+        for (const schema of schemas) {
+            // Always register models so .populate() can resolve refs (User→Role→Permission)
+            const model = getModel(schema, this.config?.tablePrefix);
+            if (strategy === 'update' || strategy === 'create' || strategy === 'create-drop') {
+                // Ensure indexes exist (like hbm2ddl.auto=update)
+                await model.ensureIndexes();
+            }
+            if (strategy === 'validate') {
+                // Validate that collection exists (apply tablePrefix for physical name)
+                const physicalCollection = `${this.config?.tablePrefix ?? ''}${schema.collection}`;
+                const collections = await mongoose.connection.db.listCollections({ name: physicalCollection }).toArray();
+                if (collections.length === 0) {
+                    throw new Error(`Schema validation failed: collection "${physicalCollection}" does not exist ` +
+                        `(entity: ${schema.name}). Set schemaStrategy to "update" or "create".`);
+                }
+            }
+        }
+    }
+    // --- CRUD ---
+    async find(schema, filter, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
+        logQuery('FIND', schema.collection, { filter: mongoFilter, options });
+        let query = model.find(mongoFilter);
+        query = applyOptions(query, options);
+        const docs = await query.lean();
+        return this.normalize(docs);
+    }
+    async findOne(schema, filter, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
+        logQuery('FIND_ONE', schema.collection, { filter: mongoFilter });
+        let query = model.findOne(mongoFilter);
+        query = applyOptions(query, options);
+        const doc = await query.lean();
+        return doc ? this.normalize(doc) : null;
+    }
+    async findById(schema, id, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema, options));
+        logQuery('FIND_BY_ID', schema.collection, { id });
+        let query = model.findOne(mongoFilter);
+        query = applyOptions(query, options);
+        const doc = await query.lean();
+        return doc ? this.normalize(doc) : null;
+    }
+    async create(schema, data) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const insertData = applyDiscriminatorToData(data, schema);
+        logQuery('CREATE', schema.collection, insertData);
+        const doc = await model.create(insertData);
+        return this.normalize(doc.toObject());
+    }
+    async update(schema, id, data) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
+        logQuery('UPDATE', schema.collection, { id, data });
+        const doc = await model.findOneAndUpdate(mongoFilter, data, { returnDocument: 'after' }).lean();
+        return doc ? this.normalize(doc) : null;
+    }
+    async updateMany(schema, filter, data) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters(filter, schema));
+        logQuery('UPDATE_MANY', schema.collection, { filter: mongoFilter, data });
+        const result = await model.updateMany(mongoFilter, data);
+        return result.modifiedCount;
+    }
+    async delete(schema, id) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyDiscriminator({ _id: id }, schema));
+        if (schema.softDelete) {
+            logQuery('SOFT_DELETE', schema.collection, { id });
+            const result = await model.findOneAndUpdate(mongoFilter, { deletedAt: new Date() });
+            return result !== null;
+        }
+        logQuery('DELETE', schema.collection, { id });
+        const result = await model.findOneAndDelete(mongoFilter);
+        return result !== null;
+    }
+    async deleteMany(schema, filter) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        if (schema.softDelete) {
+            const mongoFilter = translateFilter(applyAllFilters(filter, schema));
+            logQuery('SOFT_DELETE_MANY', schema.collection, { filter: mongoFilter });
+            const result = await model.updateMany(mongoFilter, { deletedAt: new Date() });
+            return result.modifiedCount;
+        }
+        const mongoFilter = translateFilter(applyDiscriminator(filter, schema));
+        logQuery('DELETE_MANY', schema.collection, { filter: mongoFilter });
+        const result = await model.deleteMany(mongoFilter);
+        return result.deletedCount;
+    }
+    // --- Queries ---
+    async count(schema, filter, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
+        logQuery('COUNT', schema.collection, { filter: mongoFilter });
+        return model.countDocuments(mongoFilter);
+    }
+    async distinct(schema, field, filter, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters(filter, schema, options));
+        logQuery('DISTINCT', schema.collection, { field, filter: mongoFilter });
+        return model.distinct(field, mongoFilter);
+    }
+    async aggregate(schema, stages, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        // Inject discriminator + soft-delete as first $match stage (respecte options.includeDeleted)
+        const discriminatorMatch = translateFilter(applyAllFilters({}, schema, options));
+        const pipeline = Object.keys(discriminatorMatch).length > 0
+            ? [{ $match: discriminatorMatch }]
+            : [];
+        // Translate our aggregate stages to Mongoose pipeline
+        pipeline.push(...stages.map(stage => {
+            if ('$match' in stage) {
+                return { $match: translateFilter(stage.$match) };
+            }
+            if ('$group' in stage) {
+                const group = {};
+                for (const [key, val] of Object.entries(stage.$group)) {
+                    if (key === '_by') {
+                        group._id = val ? `$${val}` : null;
+                    }
+                    else {
+                        group[key] = val;
+                    }
+                }
+                return { $group: group };
+            }
+            if ('$sort' in stage) {
+                return { $sort: stage.$sort };
+            }
+            if ('$limit' in stage) {
+                return { $limit: stage.$limit };
+            }
+            return stage;
+        }));
+        logQuery('AGGREGATE', schema.collection, pipeline);
+        const results = await model.aggregate(pipeline);
+        // Normalize: rename _id → original field name from _by
+        const groupStage = stages.find(s => '$group' in s);
+        const byField = groupStage?.$group?._by;
+        if (byField) {
+            return results.map((r) => {
+                const { _id, ...rest } = r;
+                return { [byField]: _id, ...rest };
+            });
+        }
+        return results;
+    }
+    // --- Relations (equivalent Hibernate eager/lazy loading via populate) ---
+    async findWithRelations(schema, filter, relations, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters(filter, schema));
+        logQuery('FIND_WITH_RELATIONS', schema.collection, { filter: mongoFilter, relations });
+        // Separate O2M relations (require manual FK query) from M2O/O2O/M2M (use .populate)
+        const o2mRels = relations.filter(r => schema.relations[r]?.type === 'one-to-many');
+        const populateRels = relations.filter(r => schema.relations[r]?.type !== 'one-to-many');
+        // Query WITHOUT populate first — we need the raw FK values for UUID fallback
+        let rawQuery = model.find(mongoFilter);
+        rawQuery = applyOptions(rawQuery, options);
+        const rawDocs = await rawQuery.lean();
+        // Now query WITH populate for m2o/o2o/m2m
+        let query = model.find(mongoFilter);
+        query = applyOptions(query, options);
+        for (const rel of populateRels) {
+            const relDef = schema.relations[rel];
+            if (relDef?.select) {
+                query = query.populate(rel, relDef.select.join(' '));
+            }
+            else {
+                query = query.populate(rel);
+            }
+        }
+        const docs = await query.lean();
+        const normalized = this.normalize(docs);
+        // Fallback for populate that returned null — happens when FK is a UUID
+        // string (from SQL dialect replication) but Mongoose resolves refs via
+        // _id (ObjectId). Fall back to findOne({ id: fkValue }) on the target.
+        for (const doc of normalized) {
+            for (const rel of populateRels) {
+                if (doc[rel] !== null && doc[rel] !== undefined)
+                    continue;
+                const relDef = schema.relations[rel];
+                if (!relDef)
+                    continue;
+                // Find the raw FK value from the un-populated query
+                const rawDoc = rawDocs.find((r) => String(r._id ?? r.id) === String(doc.id));
+                const rawFk = rawDoc?.[rel];
+                if (rawFk && typeof rawFk === 'string') {
+                    const targetModel = getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false });
+                    const found = await targetModel.findOne({ id: rawFk }).lean();
+                    if (found)
+                        doc[rel] = this.normalize(found);
+                }
+            }
+        }
+        // O2M: query child collection by FK for each doc
+        if (o2mRels.length > 0) {
+            for (const doc of normalized) {
+                for (const rel of o2mRels) {
+                    const relDef = schema.relations[rel];
+                    const fkField = relDef.mappedBy || `${schema.name.toLowerCase()}Id`;
+                    const children = await this.find({ name: relDef.target, collection: getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false }).collection.name, fields: {}, relations: {}, indexes: [], timestamps: false }, { [fkField]: doc.id });
+                    doc[rel] = children;
+                }
+            }
+        }
+        return normalized;
+    }
+    async findByIdWithRelations(schema, id, relations, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
+        logQuery('FIND_BY_ID_WITH_RELATIONS', schema.collection, { id, relations });
+        const o2mRels = relations.filter(r => schema.relations[r]?.type === 'one-to-many');
+        const populateRels = relations.filter(r => schema.relations[r]?.type !== 'one-to-many');
+        // Raw query (without populate) for UUID FK fallback
+        const rawDoc = await model.findOne(mongoFilter).lean();
+        let query = model.findOne(mongoFilter);
+        query = applyOptions(query, options);
+        for (const rel of populateRels) {
+            const relDef = schema.relations[rel];
+            if (relDef?.select) {
+                query = query.populate(rel, relDef.select.join(' '));
+            }
+            else {
+                query = query.populate(rel);
+            }
+        }
+        const doc = await query.lean();
+        if (!doc)
+            return null;
+        const normalized = this.normalize(doc);
+        // Fallback for populate null — UUID FK from SQL replication
+        for (const rel of populateRels) {
+            if (normalized[rel] !== null && normalized[rel] !== undefined)
+                continue;
+            const relDef = schema.relations[rel];
+            if (!relDef)
+                continue;
+            const rawFk = rawDoc?.[rel];
+            if (rawFk && typeof rawFk === 'string') {
+                const targetModel = getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false });
+                const found = await targetModel.findOne({ id: rawFk }).lean();
+                if (found)
+                    normalized[rel] = this.normalize(found);
+            }
+        }
+        // O2M: query child collection by FK
+        for (const rel of o2mRels) {
+            const relDef = schema.relations[rel];
+            const fkField = relDef.mappedBy || `${schema.name.toLowerCase()}Id`;
+            const targetModel = getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false });
+            const children = await targetModel.find({ [fkField]: id }).lean();
+            normalized[rel] = this.normalize(children);
+        }
+        return normalized;
+    }
+    // --- Upsert (equivalent Hibernate saveOrUpdate / merge) ---
+    async upsert(schema, filter, data) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters(filter, schema));
+        const insertData = applyDiscriminatorToData(data, schema);
+        logQuery('UPSERT', schema.collection, { filter: mongoFilter, data: insertData });
+        const result = await model.findOneAndUpdate(mongoFilter, { $set: insertData }, {
+            upsert: true,
+            returnDocument: 'after',
+        }).lean();
+        return this.normalize(result);
+    }
+    // --- Atomic operations ---
+    async increment(schema, id, field, amount) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        logQuery('INCREMENT', schema.collection, { id, field, amount });
+        const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+        const idVal = isObjectId ? new mongoose.Types.ObjectId(id) : id;
+        const filter = translateFilter(applyAllFilters({ _id: idVal }, schema));
+        const result = await model.collection.findOneAndUpdate(filter, { $inc: { [field]: amount } }, { returnDocument: 'after', upsert: true });
+        return this.normalize(result ?? {});
+    }
+    // --- Array operations (equivalent Hibernate @ElementCollection management) ---
+    async addToSet(schema, id, field, value) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
+        logQuery('ADD_TO_SET', schema.collection, { id, field, value });
+        const doc = await model.findOneAndUpdate(mongoFilter, { $addToSet: { [field]: value } }, { returnDocument: 'after' }).lean();
+        return doc ? this.normalize(doc) : null;
+    }
+    async pull(schema, id, field, value) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
+        logQuery('PULL', schema.collection, { id, field, value });
+        const doc = await model.findOneAndUpdate(mongoFilter, { $pull: { [field]: value } }, { returnDocument: 'after' }).lean();
+        return doc ? this.normalize(doc) : null;
+    }
+    // --- Text search ---
+    async search(schema, query, fields, options) {
+        const model = getModel(schema, this.config?.tablePrefix);
+        // Build $or with $regex for each field (works with or without text index)
+        const orConditions = fields.map(field => ({
+            [field]: { $regex: query, $options: 'i' },
+        }));
+        const baseFilter = applyAllFilters({}, schema);
+        const filter = Object.keys(baseFilter).length > 0
+            ? { $and: [baseFilter, { $or: orConditions }] }
+            : { $or: orConditions };
+        logQuery('SEARCH', schema.collection, { query, fields, filter });
+        let q = model.find(translateFilter(filter));
+        q = applyOptions(q, options);
+        const docs = await q.lean();
+        return this.normalize(docs);
+    }
+    // ── Schema management ────────────────────────────────
+    async truncateTable(tableName) {
+        const model = mongoose.models[tableName] || mongoose.connection.collection(tableName);
+        if ('deleteMany' in model) {
+            await model.deleteMany({});
+        }
+        else {
+            await model.drop().catch(() => { });
+        }
+    }
+    async truncateAll(schemas) {
+        const truncated = [];
+        for (const schema of schemas) {
+            try {
+                const col = mongoose.connection.collection(schema.collection);
+                await col.deleteMany({});
+                truncated.push(schema.collection);
+            }
+            catch (e) {
+                logQuery('TRUNCATE', `${schema.collection} skipped: ${e.message}`);
+            }
+        }
+        return truncated;
+    }
+    async dropTable(tableName) {
+        try {
+            await mongoose.connection.collection(tableName).drop();
+        }
+        catch (e) {
+            // Collection peut être absente — Mongo throw NamespaceNotFound (code 26). Pas d'erreur fatale.
+            logQuery('DROP_TABLE', `${tableName} skipped: ${e.message}`);
+        }
+    }
+    async dropAllTables() {
+        const collections = await mongoose.connection.db.listCollections().toArray();
+        for (const col of collections) {
+            try {
+                await mongoose.connection.collection(col.name).drop();
+            }
+            catch (e) {
+                logQuery('DROP_TABLE', `${col.name} skipped: ${e.message}`);
+            }
+        }
+    }
+    async dropSchema(schemas) {
+        const dropped = [];
+        for (const schema of schemas) {
+            try {
+                await mongoose.connection.collection(schema.collection).drop();
+                dropped.push(schema.collection);
+            }
+            catch (e) {
+                logQuery('DROP_TABLE', `${schema.collection} skipped: ${e.message}`);
+            }
+        }
+        return dropped;
+    }
+}
+// ============================================================
+// Factory export
+// ============================================================
+export function createDialect() {
+    return new MongoDialect();
+}
