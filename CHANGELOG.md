@@ -2,6 +2,33 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.5.4] — 2026-06-06
+
+### Fix — Anomalie #19 : `deserializeRow` plante sur un schéma sans `relations`
+
+`deserializeRow()` (et 4 autres sites SQL + 11 Mongo) accédaient à
+`schema.relations[key]` **sans garde**. Pour un schéma **sans bloc `relations`**
+(cas courant des schémas métier simples), `schema.relations` est `undefined` →
+`undefined['name']` lève `TypeError: Cannot read properties of undefined
+(reading 'name')` dès la première colonne (souvent `name`). **Fix** : optional
+chaining `schema.relations?.[key]` sur tous les accès directs des dialects.
+
+### Feat — Anomalie #20 : auto-DDL au write (`ALTER TABLE ADD COLUMN`)
+
+Quand une donnée porte un champ **sans colonne correspondante** — qu'il soit
+**déclaré au schéma OU non** — l'ORM ne doit plus échouer (`no such column`) ni
+l'ignorer silencieusement. `create()` et `update()` appellent désormais
+`ensureColumnsForData()` qui ajoute la colonne via `ALTER TABLE ADD COLUMN`
+(type : champ déclaré si connu, FK `id` pour une relation, sinon **inféré** de la
+valeur — `number/boolean/date/array/json/string`). Colonnes connues mises en
+cache par collection (introspection 1×). **Actif uniquement si
+`schemaStrategy ≠ 'none'`** (le mode strict rejette toujours un champ inconnu).
+Les valeurs non déclarées sont désormais **sérialisées** (json/date) au lieu
+d'être bindées brutes (le driver rejetait les objets).
+
+Tests : `test-scripts/anomalie-19-20-relations-autocolumn.test.mjs` (3 cas). Suite
+complète : **138/138** (aucune régression).
+
 ## [2.5.3] — 2026-05-31
 
 ### Fix — Anomalie #18 : un index fautif n'avorte plus tout `initSchema`

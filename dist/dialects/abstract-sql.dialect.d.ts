@@ -202,6 +202,11 @@ export declare abstract class AbstractSqlDialect implements IDialect {
         setClauses: string[];
         values: unknown[];
     };
+    private __knownColumns;
+    /** Type de champ DAL inféré d'une valeur JS (pour une colonne non déclarée). */
+    protected inferFieldType(value: unknown): FieldDef['type'];
+    /** Ajoute (ALTER TABLE) les colonnes manquantes pour les clés présentes dans `data`. */
+    protected ensureColumnsForData(schema: EntitySchema, data: Record<string, unknown>): Promise<void>;
     protected generateCreateTable(schema: EntitySchema, allSchemas?: EntitySchema[]): string;
     /**
      * Ensemble des colonnes physiques d'un schéma, dans le même référentiel que

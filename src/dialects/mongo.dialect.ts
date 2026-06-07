@@ -612,8 +612,8 @@ class MongoDialect implements IDialect {
     logQuery('FIND_WITH_RELATIONS', schema.collection, { filter: mongoFilter, relations });
 
     // Separate O2M relations (require manual FK query) from M2O/O2O/M2M (use .populate)
-    const o2mRels = relations.filter(r => schema.relations[r]?.type === 'one-to-many');
-    const populateRels = relations.filter(r => schema.relations[r]?.type !== 'one-to-many');
+    const o2mRels = relations.filter(r => schema.relations?.[r]?.type === 'one-to-many');
+    const populateRels = relations.filter(r => schema.relations?.[r]?.type !== 'one-to-many');
 
     // Query WITHOUT populate first — we need the raw FK values for UUID fallback
     let rawQuery = model.find(mongoFilter);
@@ -624,7 +624,7 @@ class MongoDialect implements IDialect {
     let query = model.find(mongoFilter);
     query = applyOptions(query, options);
     for (const rel of populateRels) {
-      const relDef = schema.relations[rel];
+      const relDef = schema.relations?.[rel];
       if (relDef?.select) {
         query = query.populate(rel, relDef.select.join(' '));
       } else {
@@ -641,7 +641,7 @@ class MongoDialect implements IDialect {
     for (const doc of normalized) {
       for (const rel of populateRels) {
         if (doc[rel] !== null && doc[rel] !== undefined) continue;
-        const relDef = schema.relations[rel];
+        const relDef = schema.relations?.[rel];
         if (!relDef) continue;
         // Find the raw FK value from the un-populated query
         const rawDoc = (rawDocs as Record<string, unknown>[]).find(
@@ -660,7 +660,7 @@ class MongoDialect implements IDialect {
     if (o2mRels.length > 0) {
       for (const doc of normalized) {
         for (const rel of o2mRels) {
-          const relDef = schema.relations[rel];
+          const relDef = schema.relations?.[rel];
           const fkField = relDef.mappedBy || `${schema.name.toLowerCase()}Id`;
           const children = await this.find(
             { name: relDef.target, collection: getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false }).collection.name, fields: {}, relations: {}, indexes: [], timestamps: false } as EntitySchema,
@@ -684,8 +684,8 @@ class MongoDialect implements IDialect {
     const mongoFilter = translateFilter(applyAllFilters({ _id: id }, schema));
     logQuery('FIND_BY_ID_WITH_RELATIONS', schema.collection, { id, relations });
 
-    const o2mRels = relations.filter(r => schema.relations[r]?.type === 'one-to-many');
-    const populateRels = relations.filter(r => schema.relations[r]?.type !== 'one-to-many');
+    const o2mRels = relations.filter(r => schema.relations?.[r]?.type === 'one-to-many');
+    const populateRels = relations.filter(r => schema.relations?.[r]?.type !== 'one-to-many');
 
     // Raw query (without populate) for UUID FK fallback
     const rawDoc = await model.findOne(mongoFilter).lean();
@@ -693,7 +693,7 @@ class MongoDialect implements IDialect {
     let query = model.findOne(mongoFilter);
     query = applyOptions(query, options);
     for (const rel of populateRels) {
-      const relDef = schema.relations[rel];
+      const relDef = schema.relations?.[rel];
       if (relDef?.select) {
         query = query.populate(rel, relDef.select.join(' '));
       } else {
@@ -708,7 +708,7 @@ class MongoDialect implements IDialect {
     // Fallback for populate null — UUID FK from SQL replication
     for (const rel of populateRels) {
       if (normalized[rel] !== null && normalized[rel] !== undefined) continue;
-      const relDef = schema.relations[rel];
+      const relDef = schema.relations?.[rel];
       if (!relDef) continue;
       const rawFk = (rawDoc as Record<string, unknown> | null)?.[rel];
       if (rawFk && typeof rawFk === 'string') {
@@ -720,7 +720,7 @@ class MongoDialect implements IDialect {
 
     // O2M: query child collection by FK
     for (const rel of o2mRels) {
-      const relDef = schema.relations[rel];
+      const relDef = schema.relations?.[rel];
       const fkField = relDef.mappedBy || `${schema.name.toLowerCase()}Id`;
       const targetModel = getModel({ name: relDef.target, collection: '', fields: {}, relations: {}, indexes: [], timestamps: false });
       const children = await targetModel.find({ [fkField]: id }).lean();

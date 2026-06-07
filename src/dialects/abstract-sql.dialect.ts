@@ -532,7 +532,7 @@ export abstract class AbstractSqlDialect implements IDialect {
       }
 
       const fieldDef = schema.fields[key];
-      const relDef = schema.relations[key];
+      const relDef = schema.relations?.[key];
 
       if (fieldDef) {
         result[key] = this.deserializeField(val, fieldDef);
@@ -853,7 +853,11 @@ export abstract class AbstractSqlDialect implements IDialect {
       if (!columns.includes(key) && key !== 'id' && !relationKeys.has(key)) {
         columns.push(key);
         placeholders.push(this.nextPlaceholder());
-        values.push(data[key] as unknown);
+        // Colonne non déclarée : sérialiser selon le type inféré (json/array/date/…)
+        // sinon le driver rejette les objets/Date. La colonne est garantie par
+        // ensureColumnsForData() appelé en amont (anomalie #20).
+        const f = schema.fields?.[key] ?? ({ type: this.inferFieldType(data[key]) } as FieldDef);
+        values.push(this.serializeValue(data[key], f));
       }
     }
 
@@ -871,7 +875,7 @@ export abstract class AbstractSqlDialect implements IDialect {
       if (key === 'id' || key === '_id') continue;
 
       const field = schema.fields[key];
-      const rel = schema.relations[key];
+      const rel = schema.relations?.[key];
 
       if (field) {
         setClauses.push(`${this.quoteIdentifier(key)} = ${this.nextPlaceholder()}`);
@@ -888,6 +892,11 @@ export abstract class AbstractSqlDialect implements IDialect {
       } else if (key === 'createdAt' || key === 'updatedAt') {
         setClauses.push(`${this.quoteIdentifier(key)} = ${this.nextPlaceholder()}`);
         values.push(this.serializeDate(val));
+      } else {
+        // Champ NON déclaré présent dans la donnée : la colonne est garantie par
+        // ensureColumnsForData() (anomalie #20) → on l'écrit (type inféré) au lieu de l'ignorer.
+        setClauses.push(`${this.quoteIdentifier(key)} = ${this.nextPlaceholder()}`);
+        values.push(this.serializeValue(val, { type: this.inferFieldType(val) } as FieldDef));
       }
     }
 
@@ -898,6 +907,82 @@ export abstract class AbstractSqlDialect implements IDialect {
     }
 
     return { setClauses, values };
+  }
+
+  // ============================================================
+  // Auto-DDL au write (anomalie #20)
+  // ------------------------------------------------------------
+  // Quand une donnée porte un champ SANS colonne correspondante — qu'il soit
+  // déclaré au schéma OU non — l'ORM ne doit pas échouer ("no such column") ni
+  // l'ignorer silencieusement : il ajoute la colonne via ALTER TABLE ADD COLUMN.
+  // Type : champ déclaré si connu, FK (id) pour une relation, sinon INFÉRÉ de la
+  // valeur. Actif seulement si `schemaStrategy` autorise le DDL (≠ 'none').
+  // Colonnes connues mises en cache par collection (introspection 1×).
+  // ============================================================
+  private __knownColumns = new Map<string, Set<string>>();
+
+  /** Type de champ DAL inféré d'une valeur JS (pour une colonne non déclarée). */
+  protected inferFieldType(value: unknown): FieldDef['type'] {
+    if (typeof value === 'number') return 'number';
+    if (typeof value === 'boolean') return 'boolean';
+    if (value instanceof Date) return 'date';
+    if (Array.isArray(value)) return 'array';
+    if (value !== null && typeof value === 'object') return 'json';
+    return 'string';
+  }
+
+  /** Ajoute (ALTER TABLE) les colonnes manquantes pour les clés présentes dans `data`. */
+  protected async ensureColumnsForData(
+    schema: EntitySchema,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const strat = this.config?.schemaStrategy;
+    if (!strat || strat === 'none') return;            // mode strict : pas de DDL au write
+    const coll = this.getPrefixedName(schema.collection);
+
+    let known = this.__knownColumns.get(coll);
+    if (!known) {
+      try {
+        const cols = await this.getExistingColumns(schema.collection);
+        if (!cols || cols.size === 0) return;          // table absente → initSchema s'en charge
+        known = new Set([...cols].map(c => c.toLowerCase()));
+        this.__knownColumns.set(coll, known);
+      } catch {
+        return;                                         // introspection impossible → on laisse
+      }
+    }
+
+    const relationKeys = new Set(Object.keys(schema.relations || {}));
+    const q = (n: string) => this.quoteIdentifier(n);
+    const table = q(coll);
+
+    for (const key of Object.keys(data)) {
+      if (key === 'id' || key === '_id') continue;
+      // Nom de colonne réel (relation M2O/O2O → joinColumn ; M2M/O2M → pas de colonne).
+      let colName = key;
+      if (relationKeys.has(key)) {
+        const rel = schema.relations![key];
+        if (rel.type === 'many-to-many' || rel.type === 'one-to-many') continue;
+        colName = rel.joinColumn || key;
+      }
+      if (known.has(colName.toLowerCase())) continue;
+
+      // Type : déclaré > relation (id) > inféré.
+      let sqlType: string;
+      const field = schema.fields?.[key];
+      if (relationKeys.has(key)) sqlType = this.getIdColumnType();
+      else if (field) sqlType = this.fieldToSqlType(field);
+      else sqlType = this.fieldToSqlType({ type: this.inferFieldType(data[key]) } as FieldDef);
+
+      const sql = `ALTER TABLE ${table} ADD ${q(colName)} ${sqlType}`;
+      try {
+        this.log('DDL_ALTER_ADD_DATA', `${coll}.${colName}`, sql);
+        await this.executeRun(sql, []);
+        known.add(colName.toLowerCase());
+      } catch (e) {
+        this.log('DDL_ALTER_ADD_DATA_FAIL', `${coll}.${colName}`, (e as Error).message);
+      }
+    }
   }
 
   // ============================================================
@@ -1533,8 +1618,9 @@ export abstract class AbstractSqlDialect implements IDialect {
   }
 
   async create<T>(schema: EntitySchema, data: Record<string, unknown>): Promise<T> {
-    this.resetParams();
     const insertData = this.applyDiscriminatorToData(data, schema);
+    await this.ensureColumnsForData(schema, insertData);   // anomalie #20 : ALTER TABLE au besoin
+    this.resetParams();
     const { columns, placeholders, values } = this.prepareInsertData(schema, insertData);
     const table = this.quoteIdentifier(this.getPrefixedName(schema.collection));
     const colsSql = columns.map(c => this.quoteIdentifier(c)).join(', ');
@@ -1575,6 +1661,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     const existing = await this.findById(schema, id);
     if (!existing) return null;
 
+    await this.ensureColumnsForData(schema, data);   // anomalie #20 : ALTER TABLE au besoin
     this.resetParams();
     const { setClauses, values } = this.prepareUpdateData(schema, data);
 
@@ -1913,7 +2000,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     const result = { ...row };
 
     for (const relName of relations) {
-      const relDef = schema.relations[relName];
+      const relDef = schema.relations?.[relName];
       if (!relDef) continue;
 
       const targetSchema = this.schemas.find(s => s.name === relDef.target);
@@ -2046,7 +2133,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     if (!row) return null;
 
     // Many-to-many: INSERT into junction table
-    const relDef = schema.relations[field];
+    const relDef = schema.relations?.[field];
     if (relDef?.type === 'many-to-many' && relDef.through) {
       const sourceKey = `${schema.name.toLowerCase()}Id`;
       const targetKey = `${relDef.target.toLowerCase()}Id`;
@@ -2113,7 +2200,7 @@ export abstract class AbstractSqlDialect implements IDialect {
     if (!row) return null;
 
     // Many-to-many: DELETE from junction table
-    const relDef = schema.relations[field];
+    const relDef = schema.relations?.[field];
     if (relDef?.type === 'many-to-many' && relDef.through) {
       const sourceKey = `${schema.name.toLowerCase()}Id`;
       const targetKey = `${relDef.target.toLowerCase()}Id`;

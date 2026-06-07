@@ -292,6 +292,20 @@ const found = await users.findOne({ email: 'a@b.c' });
   one-to-one étaient eager). `findById()` retourne désormais la string id pour ces relations,
   pas l'objet populé. Utiliser `findByIdWithRelations` / `findWithRelations` pour populer,
   ou `extractRelId(value)` pour des comparaisons sûres en lazy comme en eager.
+- **Authoring TypeScript d'un `EntitySchema`** : le type exige `relations`, `indexes` ET
+  `timestamps` (non optionnels) — c'est l'origine du `relations: {}` « historique » des schémas TS.
+  En `.mjs` (JS, non typé) on peut les omettre, mais AVANT 2.5.4 un schéma SANS bloc `relations`
+  plantait à la **lecture** (`deserializeRow` → `TypeError reading 'name'`, anomalie #19 — corrigée
+  en 2.5.4 via `schema.relations?.[…]`). Pratique : un helper
+  `def(s){ return { relations:{}, indexes:[], timestamps:false, ...s } }`.
+  La colonne `id` (PK) est **auto-gérée** → NE PAS déclarer de champ `id` (et `FieldDef` n'a ni
+  `primary` ni `index` : déclarer les index via le tableau `indexes`, forme objet
+  `[{ fields: { account: 'asc' } }]`). `BaseRepository<T>` contraint **`T extends { id: string }`**
+  → typer les rows `{ id: string; [k: string]: any }`.
+- **Auto-DDL au write (2.5.4, anomalie #20)** : avec `schemaStrategy ≠ 'none'`, `create`/`update`
+  ajoutent automatiquement (`ALTER TABLE ADD COLUMN`) toute colonne d'un champ présent dans la donnée
+  mais absente de la table (type déclaré, FK, ou **inféré** de la valeur). En `'none'` (strict),
+  un champ inconnu reste rejeté.
 - `getDialect()` est un singleton ; pour plusieurs connexions simultanées utiliser
   `createIsolatedDialect()` (hors singleton, schémas non enregistrés globalement).
 - `schemaStrategy: 'create'` drop tout le DB au boot puis recrée. `'create-drop'` (≥ 2.2.9) drop **scoped aux schemas register** au boot ET au shutdown — sécurise les DB partagées entre apps (cf. anomalie #14). En prod : `'validate'`.
