@@ -287,7 +287,8 @@ export type DialectType =
   | 'firestore'
   | 'firebird'
   | 'clickhouse'
-  | 'redis';
+  | 'redis'
+  | 'cassandra';
 
 /**
  * Schema generation strategy (inspired by hibernate.hbm2ddl.auto)

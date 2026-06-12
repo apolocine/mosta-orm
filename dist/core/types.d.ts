@@ -189,7 +189,7 @@ export interface AggregateLimitStage {
     $limit: number;
 }
 export type AggregateStage = AggregateMatchStage | AggregateGroupStage | AggregateSortStage | AggregateLimitStage;
-export type DialectType = 'mongodb' | 'sqlite' | 'sqljs' | 'postgres' | 'pglite' | 'mysql' | 'mariadb' | 'oracle' | 'mssql' | 'cockroachdb' | 'db2' | 'hana' | 'hsqldb' | 'spanner' | 'sybase' | 'duckdb' | 'firestore' | 'firebird' | 'clickhouse' | 'redis';
+export type DialectType = 'mongodb' | 'sqlite' | 'sqljs' | 'postgres' | 'pglite' | 'mysql' | 'mariadb' | 'oracle' | 'mssql' | 'cockroachdb' | 'db2' | 'hana' | 'hsqldb' | 'spanner' | 'sybase' | 'duckdb' | 'firestore' | 'firebird' | 'clickhouse' | 'redis' | 'cassandra';
 /**
  * Schema generation strategy (inspired by hibernate.hbm2ddl.auto)
  *

@@ -2,6 +2,29 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.10.0] — 2026-06-12
+
+### Feat — Dialecte Cassandra (19e dialecte · wide-column CQL)
+
+Nouveau dialecte `cassandra` (`AbstractSqlDialect` + quirks CQL) pour **Apache Cassandra**
+(NoSQL wide-column distribué). Driver officiel `cassandra-driver` (peer optionnel).
+**Validé LIVE sur amia : harnais `test-sgbd` 20/20.**
+
+- Connexion : `cassandra://host:9042/keyspace[?dc=datacenter1]`.
+- **Quirks CQL gérés** : `CREATE TABLE (… PRIMARY KEY)` sans NOT NULL/UNIQUE/FK/DEFAULT ;
+  `ALLOW FILTERING` ajouté automatiquement aux `SELECT` filtrés sur colonne non-clé ;
+  `LIMIT` sans `OFFSET` ; pas d'`ORDER BY` arbitraire ; `INSERT` = upsert natif ;
+  placeholders `?` (prepared) ; introspection `system_schema.tables/columns` ; types
+  `text/double/boolean/timestamp` ; `Long` → number à la lecture ; **`WHERE 1=1` retiré**
+  (tautologie SQL des filtres vides, refusée par CQL).
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`cassandra-driver` optionnel).
+
+**Validé LIVE** sur un nœud `cassandra` 4.1 natif (sans Docker, amia) : harnais `test-sgbd`
+**20/20**. NB infra : Cassandra 4.1 exige **Java 11** (option JVM CMS retirée en Java 14+ →
+ne démarre pas sous Java 17).
+
 ## [2.9.0] — 2026-06-12
 
 ### Feat — Dialecte Redis (18e dialecte · NoSQL documentaire, Redis Stack)

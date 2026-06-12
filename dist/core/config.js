@@ -124,6 +124,10 @@ export const DIALECT_CONFIGS = {
         installHint: 'npm install ioredis',
         label: 'Redis Stack (NoSQL doc — RedisJSON + RediSearch)',
     },
+    cassandra: {
+        installHint: 'npm install cassandra-driver',
+        label: 'Cassandra (NoSQL wide-column — CQL, R&D)',
+    },
 };
 /**
  * Get the list of supported dialect types

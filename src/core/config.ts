@@ -136,6 +136,10 @@ export const DIALECT_CONFIGS: Record<DialectType, DialectConfig> = {
     installHint: 'npm install ioredis',
     label: 'Redis Stack (NoSQL doc — RedisJSON + RediSearch)',
   },
+  cassandra: {
+    installHint: 'npm install cassandra-driver',
+    label: 'Cassandra (NoSQL wide-column — CQL, R&D)',
+  },
 };
 
 /**
