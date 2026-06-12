@@ -2,6 +2,30 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.9.0] — 2026-06-12
+
+### Feat — Dialecte Redis (18e dialecte · NoSQL documentaire, Redis Stack)
+
+Nouveau dialecte `redis` (`IDialect` dédié, façon Mongo) sur **Redis Stack**. Driver
+`ioredis` (peer optionnel). **Pas un simple cache KV** : stockage documentaire JSON +
+recherche serveur.
+
+- Stockage **RedisJSON** : `JSON.SET/GET`, `JSON.NUMINCRBY` (increment atomique).
+- Requêtes **RediSearch** : un index `FT.CREATE` par entité à l'`initSchema` ; `FT.SEARCH`
+  avec **traduction des filtres** `@mostajs` (`$eq/$ne/$gt/$gte/$lt/$lte/$in/$nin/$regex`)
+  → TAG / NUMERIC / TEXT ; `SORTBY`/`LIMIT` ; count via `LIMIT 0 0` ; soft-delete via champ
+  indexé `_deleted`. Échappement des valeurs TAG (UUID).
+- **CRUD** complet, relations many-to-one par lookup (`JSON.GET`), upsert, `addToSet`/`pull`.
+- Connexion : `redis://host:6379`.
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`ioredis` optionnel).
+
+**Validé LIVE** sur un `redis-stack-server` natif (modules `search` + `ReJSON`, sans
+Docker, amia) : harnais `test-sgbd` **20/20**. Périmètre : full-text via RediSearch ;
+agrégation lourde déléguée (`FT.AGGREGATE`). Positionnement (cf. étude croisée interne) :
+couche données opérationnelle temps-réel qui alimente les couches analytiques/décisionnelles.
+
 ## [2.8.0] — 2026-06-12
 
 ### Feat — Dialecte ClickHouse (17e dialecte · OLAP colonnaire)

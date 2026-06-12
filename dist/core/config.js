@@ -120,6 +120,10 @@ export const DIALECT_CONFIGS = {
         installHint: 'npm install @clickhouse/client',
         label: 'ClickHouse (OLAP colonnaire — append/analytique, HTTP)',
     },
+    redis: {
+        installHint: 'npm install ioredis',
+        label: 'Redis Stack (NoSQL doc — RedisJSON + RediSearch)',
+    },
 };
 /**
  * Get the list of supported dialect types

@@ -42,6 +42,7 @@ const DIALECT_LOADERS = {
     firestore: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/firestore.dialect.js'),
     firebird: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/firebird.dialect.js'),
     clickhouse: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/clickhouse.dialect.js'),
+    redis: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/redis.dialect.js'),
 };
 /**
  * Dynamically load a dialect adapter module.

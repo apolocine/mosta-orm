@@ -132,6 +132,10 @@ export const DIALECT_CONFIGS: Record<DialectType, DialectConfig> = {
     installHint: 'npm install @clickhouse/client',
     label: 'ClickHouse (OLAP colonnaire — append/analytique, HTTP)',
   },
+  redis: {
+    installHint: 'npm install ioredis',
+    label: 'Redis Stack (NoSQL doc — RedisJSON + RediSearch)',
+  },
 };
 
 /**
