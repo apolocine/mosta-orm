@@ -2,6 +2,32 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.7.0] — 2026-06-12
+
+### Feat — Dialecte Firebird (16e dialecte · OLTP relationnel)
+
+Nouveau dialecte `firebird` (`AbstractSqlDialect` + quirks) pour **Firebird 3.0+**
+(lignée InterBase). Driver pur-JS `node-firebird` (peer optionnel). Connexion serveur
+ou via tunnel ; id UUID pré-généré (pas de generators).
+
+- **CRUD** complet, relations (many-to-one), filtres, count, upsert.
+- Connexion : `firebird://user:password@host:port/chemin.fdb[?role=&plugin=&wireCrypt=&create=true]`.
+- **Quirks gérés** : pagination `ROWS m TO n` (pas de LIMIT/OFFSET) ; `boolean → SMALLINT`
+  0/1 (node-firebird binde les booléens en `'1'`/`'0'` → BOOLEAN natif lève `-303`) ;
+  `text/json/array → VARCHAR(4000)` (node-firebird **hange** à la lecture des BLOB sur
+  wire chiffré) ; `DROP TABLE` multi-passes (ni `IF EXISTS` ni `CASCADE`) ; introspection
+  `RDB$RELATIONS`/`RDB$RELATION_FIELDS` ; auth `Srp` + `wireCrypt` forcés (négociation auto
+  du driver plante) ; insensible-casse via `UPPER(col) LIKE UPPER(?)`.
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`node-firebird` optionnel).
+
+**Validé LIVE** sur un serveur `firebird3.0-server` natif (sans Docker, amia) :
+harnais `test-sgbd` **20/20**. Limites connues : contenu texte/JSON ≤ 4000 car. ;
+compteur d'affected-rows approximatif (`updateMany`/`deleteMany`) — non exposé par le driver.
+
+Rapport de validation HTML : générateur réutilisable `test-scripts/sgbd-html-report.mjs`.
+
 ## [2.6.1] — 2026-06-12
 
 ### Chore — packaging npm allégé (aucun changement de code)

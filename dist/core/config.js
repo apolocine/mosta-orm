@@ -112,6 +112,10 @@ export const DIALECT_CONFIGS = {
         installHint: 'npm install @google-cloud/firestore',
         label: 'Google Cloud Firestore (NoSQL doc — cloud managé / émulateur)',
     },
+    firebird: {
+        installHint: 'npm install node-firebird',
+        label: 'Firebird (OLTP relationnel — serveur / embarqué, FB 3.0+)',
+    },
 };
 /**
  * Get the list of supported dialect types
