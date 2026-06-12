@@ -2,6 +2,35 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.10.1] — 2026-06-13
+
+### Validé — HSQLDB via le pont JDBC (1er dialecte « pont » validé live)
+
+Le dialecte `hsqldb` (déjà livré, sans driver npm) est désormais **validé LIVE 20/20**
+via le **pont JDBC transparent** : un process Java `MostaJdbcBridge` charge `hsqldb*.jar`
+depuis `jar_files/` et parle HTTP à l'ORM (`AbstractSqlDialect` détecte le JAR et route).
+C'est le même chemin qui activera DB2 / SAP HANA / Sybase une fois leur driver JDBC déposé.
+
+- Serveur HSQLDB **local** (aucun Docker) : `org.hsqldb.server.Server`, port 9001, base
+  `mostadev`, user `SA`/sans mot de passe. Script de lancement :
+  `test-scripts/hjar/run-hsqldb-server.sh`.
+- URI ORM : `hsqldb:hsql://localhost:9001/mostadev`.
+
+### Fix — `count()` insensible à la casse de l'alias (HSQLDB/Oracle)
+
+`SELECT COUNT(*) as cnt` : certains moteurs **plient l'alias non-quoté en MAJUSCULES**
+(HSQLDB → `CNT`), et le pont JDBC renvoie la clé brute sans la normaliser comme le font
+les drivers natifs. `count()` lit désormais `cnt` puis `CNT`, et à défaut la première (et
+seule) valeur de la ligne — robuste quel que soit le pliage de casse du backend.
+Non-régression vérifiée 20/20 sur les 14 dialectes SQL déjà validés (locaux + amia).
+
+### Fix — Dialecte SQL Server : connexion par URL + `NVARCHAR(255)`
+
+- `doConnect` parse une URL `mssql://user:pass@host:port/db?encrypt=…` en objet de config
+  (node-mssql exige un objet, pas une chaîne).
+- `string` → `NVARCHAR(255)` (et non `NVARCHAR(MAX)`) : SQL Server interdit un index/contrainte
+  `UNIQUE` sur `NVARCHAR(MAX)`. Validé LIVE 20/20 sur SQL Server 2022 natif (apt, sans Docker).
+
 ## [2.10.0] — 2026-06-12
 
 ### Feat — Dialecte Cassandra (19e dialecte · wide-column CQL)

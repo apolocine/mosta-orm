@@ -1,6 +1,6 @@
 {
   "name": "@mostajs/orm",
-  "version": "2.10.0",
+  "version": "2.10.1",
   "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 19 databases, zero lock-in, runs in the browser/WebContainer via WASM (SQLite & Postgres)",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
   "license": "AGPL-3.0-or-later",

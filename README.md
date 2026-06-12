@@ -292,25 +292,68 @@ SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · C
 ### Live validation
 
 Every newly added dialect is validated end-to-end against a **real native engine** (no Docker)
-with the shared `test-sgbd` harness — **20 checks**: connection · schema (3 repos) · create
-(with relations) · `findById`/`findOne`/`findAll` · `count` · filtered query · `update` ·
-`upsert` · `delete` · bulk create (10 rows) · filter+count consistency · update loop · relation
-integrity · full cleanup.
+with the shared `test-sgbd` harness. The same **20 checks** run on each dialect, across 8 phases.
+Detail of the **20/20** run on **HSQLDB** (HyperSQL 2.7, via the JDBC bridge) — each check `1/1 ✅`:
 
-| Dialect | Engine (native) | Harness | Result |
-|---|---|:---:|:---:|
-| **Firebird** | `firebird3.0-server` | `test-sgbd` | **20/20** ✅ |
-| **ClickHouse** | `clickhouse-server` | `test-sgbd` | **20/20** ✅ |
-| **Redis** | `redis-stack-server` (RedisJSON+RediSearch) | `test-sgbd` | **20/20** ✅ |
-| **Cassandra** | `cassandra` 4.1 (CQL) | `test-sgbd` | **20/20** ✅ |
-| **Firestore** | Java emulator | `test-sgbd` + NoSQL smoke | **20/20** + **41/41** ✅ |
-| **DuckDB** | in-process | `test-sgbd` | **20/20** ✅ |
+| # | Phase | Test | HSQLDB |
+|:--:|---|---|:--:|
+| 1 | Connexion | `getDialect()` — connexion + singleton | 1/1 ✅ |
+| 2 | Schéma | `BaseRepository(Category)` — schéma créé | 1/1 ✅ |
+| 3 | Schéma | `BaseRepository(Product)` — schéma créé | 1/1 ✅ |
+| 4 | Schéma | `BaseRepository(Order)` — schéma créé | 1/1 ✅ |
+| 5 | Create | Category — create ×2 | 1/1 ✅ |
+| 6 | Create | Product — create ×3 avec relation `category` | 1/1 ✅ |
+| 7 | Create | Order — create ×2 avec relation `product` | 1/1 ✅ |
+| 8 | Read | `findById()` | 1/1 ✅ |
+| 9 | Read | `findOne({ slug })` | 1/1 ✅ |
+| 10 | Read | `findAll()` | 1/1 ✅ |
+| 11 | Read | `count()` | 1/1 ✅ |
+| 12 | Read | `findAll({ status })` — filtré | 1/1 ✅ |
+| 13 | Update | `update()` — modifier prix/stock/statut | 1/1 ✅ |
+| 14 | Update | `upsert()` — créer si inexistant puis MAJ | 1/1 ✅ |
+| 15 | Delete | `delete()` — supprimer un product | 1/1 ✅ |
+| 16 | Avancé | create en masse (10 products) | 1/1 ✅ |
+| 17 | Avancé | `findAll` filtré + `count` cohérent | 1/1 ✅ |
+| 18 | Avancé | update en boucle + vérification | 1/1 ✅ |
+| 19 | Avancé | Order avec relation product valide | 1/1 ✅ |
+| 20 | Nettoyage | suppression de toutes les données de test | 1/1 ✅ |
+| | | **Total** | **20/20 ✅** |
+
+**17 dialects validated 20/20** against real engines (native servers on a Linux box, or local):
+
+| Dialect | Engine | Result |
+|---|---|:---:|
+| **PostgreSQL** | `postgresql` (native) | **20/20** ✅ |
+| **SQL Server** | `mssql-server` 2022 (native apt, no Docker) | **20/20** ✅ |
+| **MySQL** | `mysqld` (native) | **20/20** ✅ |
+| **MariaDB** | `mysqld` (native) | **20/20** ✅ |
+| **Oracle XE** | `oracle-xe-21c` (native) | **20/20** ✅ |
+| **CockroachDB** | `cockroachdb` (native) | **20/20** ✅ |
+| **MongoDB** | `mongod` (native) | **20/20** ✅ |
+| **Firebird** | `firebird3.0-server` (native) | **20/20** ✅ |
+| **ClickHouse** | `clickhouse-server` (native) | **20/20** ✅ |
+| **Redis** | `redis-stack-server` (RedisJSON+RediSearch) | **20/20** ✅ |
+| **Cassandra** | `cassandra` 4.1 (CQL, native) | **20/20** ✅ |
+| **Firestore** | Java emulator | **20/20** + **41/41** ✅ |
+| **HSQLDB** | HyperSQL 2.7 (Java, JDBC bridge) | **20/20** ✅ |
+| **DuckDB** | in-process | **20/20** ✅ |
+| **SQLite** | `better-sqlite3` | **20/20** ✅ |
+| **sqljs** | SQLite WASM (`sql.js`) | **20/20** ✅ |
+| **pglite** | PostgreSQL WASM (`@electric-sql/pglite`) | **20/20** ✅ |
+
+> **HSQLDB** runs through the transparent JDBC bridge (a Java `MostaJdbcBridge` process that
+> loads `hsqldb*.jar` from `jar_files/` and speaks HTTP to the ORM) — same path that powers
+> DB2 / SAP HANA / Sybase once their JDBC drivers are dropped in.
+>
+> **Pending** (code shipped, live validation requires extra infra): DB2 · SAP HANA · Sybase
+> (JDBC bridge — driver JAR needed), Spanner (16 GB RAM emulator).
 
 > Engine-specific quirks surfaced & fixed during live validation — Firebird: `boolean→SMALLINT`,
 > `text/json→VARCHAR` (driver BLOB read hangs), Srp+wireCrypt auth; ClickHouse: `MergeTree`
 > engine, typed params, `mutations_sync` for synchronous update/delete; Redis: `FT.SEARCH`
 > filter translation, TAG escaping; Cassandra: `ALLOW FILTERING`, `WHERE 1=1` stripping, Java 11.
-> An HTML report per run is produced by `test-scripts/sgbd-html-report.mjs`.
+> Each run produces an HTML report (`test-scripts/sgbd-html-report.mjs`). Validation is done
+> **one engine at a time** (stop current → start target) to fit a memory-constrained host.
 
 **+ WASM runtimes** — two zero-binary dialects run in WebAssembly, so the same ORM **boots in the browser / Bolt.new / Cloudflare Workers with no native binary**:
 
