@@ -12,3 +12,8 @@ orm-scripts-tests/
 test-scripts/
 package-lock.json
 hjar/
+
+# Firestore emulator (artefacts runtime)
+.firestore-emulator/
+firestore-debug.log
+firestore-export/

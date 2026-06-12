@@ -283,7 +283,8 @@ export type DialectType =
   | 'hsqldb'
   | 'spanner'
   | 'sybase'
-  | 'duckdb';
+  | 'duckdb'
+  | 'firestore';
 
 /**
  * Schema generation strategy (inspired by hibernate.hbm2ddl.auto)

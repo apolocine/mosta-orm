@@ -1,15 +1,15 @@
 # @mostajs/orm
 
-> **Plug & Play ORM to Drive 13 Databases at Once**
+> **Plug & Play ORM to Drive 15 Databases at Once**
 
 [![npm version](https://img.shields.io/npm/v/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
 [![npm downloads](https://img.shields.io/npm/dm/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
-[![dialects](https://img.shields.io/badge/dialects-13-success.svg)](#databases)
+[![dialects](https://img.shields.io/badge/dialects-15-success.svg)](#databases)
 [![Types: TypeScript](https://img.shields.io/badge/types-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/@mostajs/orm)](https://bundlephobia.com/package/@mostajs/orm)
 
-Hibernate-inspired multi-dialect ORM for Node.js & TypeScript — **one API, 13 databases, zero lock-in, bundler-friendly**.
+Hibernate-inspired multi-dialect ORM for Node.js & TypeScript — **one API, 15 databases, zero lock-in, bundler-friendly**.
 
 📦 **npm** · https://www.npmjs.com/package/@mostajs/orm
 🐙 **GitHub** · https://github.com/apolocine/mosta-orm
@@ -28,10 +28,10 @@ cd ~/my-app && ./01-quickstart-sqlite.sh            # runnable in 30 seconds
 
 ## Why @mostajs/orm ?
 
-- 🎯 **One API, 13 dialects.** Switch from PostgreSQL to MongoDB to SQLite without rewriting a single repository call.
+- 🎯 **One API, 15 dialects.** Switch from PostgreSQL to MongoDB to Firestore to SQLite without rewriting a single repository call.
 - 🪶 **Zero lock-in.** Native drivers, no proprietary query DSL — your SQL/NoSQL stays portable.
 - 🧬 **Hibernate / JPA semantics.** `@OneToMany`, cascade types, `SAVEPOINT`, schema strategies (`validate`/`update`/`create`/`create-drop`) — concepts battle-tested for 25 years, ported to TypeScript.
-- 🌉 **Drop-in Prisma replacement.** [`@mostajs/orm-bridge`](https://www.npmjs.com/package/@mostajs/orm-bridge) lets you keep your Prisma code while running on any of 13 databases.
+- 🌉 **Drop-in Prisma replacement.** [`@mostajs/orm-bridge`](https://www.npmjs.com/package/@mostajs/orm-bridge) lets you keep your Prisma code while running on any of 15 databases.
 - 🔁 **Cross-dialect replication built-in.** [`@mostajs/replicator`](https://www.npmjs.com/package/@mostajs/replicator) — CDC + master/slave + failover across SQL ↔ MongoDB.
 - 🧪 **Bundler-friendly.** Tree-shakable ESM, no `eval`, works with esbuild / Vite / Next.js / Bun out of the box.
 - 🏷️ **Multi-app DB cohabitation** *(v2.3.0+)*. `DB_TABLE_PREFIX` à la Hibernate `physical_naming_strategy` — let two apps share one Oracle/MSSQL/HANA DB user without colliding on `users`/`roles`/`permissions`.
@@ -118,8 +118,8 @@ Working from an **AI dev tool** (Cursor, Cline, Claude…)? Generate schemas, li
 
 | | @mostajs/orm | Prisma | Drizzle | TypeORM |
 |---|:---:|:---:|:---:|:---:|
-| SQL dialects | **9** *(PG, MySQL, MariaDB, SQLite, MSSQL, Oracle, DB2, HANA, Cockroach…)* | 5 | 5 | 8 |
-| NoSQL dialects | **MongoDB native** | ❌ | ❌ | ❌ |
+| SQL dialects | **10** *(PG, MySQL, MariaDB, SQLite, MSSQL, Oracle, DB2, HANA, Cockroach, DuckDB…)* | 5 | 5 | 8 |
+| NoSQL dialects | **MongoDB + Firestore native** | ❌ | ❌ | ❌ |
 | Same API across SQL & NoSQL | ✅ | ❌ | ❌ | ❌ |
 | Browser / WebContainer / edge | ✅ *(WASM `sqljs` — zero native binary)* | ⚠️ *(Accelerate, paid)* | ⚠️ *(driver)* | ❌ |
 | Cross-dialect replication | ✅ *(via [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator))* | ❌ | ❌ | ❌ |
@@ -278,7 +278,10 @@ If `@mostajs/orm` saves you days of glue code, please :
 
 ## Databases
 
-SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · CockroachDB · DB2 · SAP HANA · HSQLDB · Spanner · Sybase
+SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · CockroachDB · DB2 · SAP HANA · HSQLDB · Spanner · Sybase · DuckDB · Firestore
+
+- **`duckdb`** — OLAP **in-process** engine (file or `:memory:`), SQL ≈ PostgreSQL. Analytics without a server.
+- **`firestore`** — Google Cloud **Firestore**, NoSQL document store (Mongo-style API). Remote (gRPC/TLS) or local **Java emulator** (no Docker, no key); production via a service-account key. Full-text search delegates to an external search module.
 
 **+ WASM runtimes** — two zero-binary dialects run in WebAssembly, so the same ORM **boots in the browser / Bolt.new / Cloudflare Workers with no native binary**:
 
@@ -344,7 +347,8 @@ Because the WASM build needs **no native binary and no server**, the same typed 
 ```bash
 npm install @mostajs/orm
 # + the driver for your dialect :
-npm install better-sqlite3      # or: pg, mysql2, mongoose, oracledb, mssql, ibm_db, mariadb, @sap/hana-client, @google-cloud/spanner
+npm install better-sqlite3      # or: pg, mysql2, mongoose, oracledb, mssql, ibm_db, mariadb, @sap/hana-client, @google-cloud/spanner, duckdb
+npm install @google-cloud/firestore # Firestore — NoSQL document store (dialect: 'firestore'); Java emulator in dev, GCP key in prod
 npm install sql.js              # SQLite in the browser / Bolt.new / Workers — no native binary (dialect: 'sqljs')
 npm install @electric-sql/pglite # PostgreSQL in the browser — idb:// persistence (dialect: 'pglite')
 ```
@@ -1059,7 +1063,7 @@ const conn = getNamedConnection('audit')
 
 | Package | Description |
 |---|---|
-| [@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge) | Keep your Prisma code, run it on any of the 13 databases (`createPrismaLikeDb()` is a drop-in replacement for `new PrismaClient()`). |
+| [@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge) | Keep your Prisma code, run it on any of the 15 databases (`createPrismaLikeDb()` is a drop-in replacement for `new PrismaClient()`). |
 | [@mostajs/orm-cli](https://www.npmjs.com/package/@mostajs/orm-cli) | `npx @mostajs/orm-cli` — interactive CLI : convert schemas, init databases, scaffold services, replicator + monitor, seeding, bootstrap Prisma migration. |
 | [@mostajs/orm-adapter](https://www.npmjs.com/package/@mostajs/orm-adapter) | Convert Prisma / JSON Schema / OpenAPI / native `.mjs` to `EntitySchema[]` (bidirectional). |
 | [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator) | Cross-dialect replication : CQRS master/slave, CDC rules (snapshot + incremental), wildcard `*`, failover (`promoteToMaster`). As of @mostajs/orm v1.13, Mongo FK columns accept UUID strings coming from SQL dialects (populate falls back to `{ id: uuid }` lookup). |

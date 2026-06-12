@@ -51,6 +51,7 @@ const DIALECT_LOADERS: Record<DialectType, () => Promise<{ createDialect: () => 
   spanner:     () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/spanner.dialect.js'),
   sybase:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sybase.dialect.js'),
   duckdb:      () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/duckdb.dialect.js'),
+  firestore:   () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/firestore.dialect.js'),
 };
 
 /**

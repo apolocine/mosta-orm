@@ -120,6 +120,10 @@ export const DIALECT_CONFIGS: Record<DialectType, DialectConfig> = {
     installHint: 'npm install duckdb',
     label: 'DuckDB (OLAP in-process — fichier / :memory:)',
   },
+  firestore: {
+    installHint: 'npm install @google-cloud/firestore',
+    label: 'Google Cloud Firestore (NoSQL doc — cloud managé / émulateur)',
+  },
 };
 
 /**

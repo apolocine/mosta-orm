@@ -2,6 +2,50 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.6.0] — 2026-06-12
+
+### Feat — Dialecte Firestore (15e dialecte · NoSQL documentaire)
+
+Nouveau dialecte `firestore` (`IDialect` dédié, façon Mongo) pour **Google Cloud
+Firestore** — base NoSQL documentaire managée, accès distant (gRPC/TLS) ou
+**émulateur Java** local. Driver pur-JS `@google-cloud/firestore` (peer optionnel),
+**mode `preferRest`** edge/WebContainer-safe.
+
+- **CRUD** complet ; filtres `@mostajs` → `where()`
+  (`$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`/`$nin`/`$contains`) ;
+  `sort`/`limit`/`skip`/`select` ; `count` agrégé ; `distinct`.
+- **soft-delete**, **timestamps**, **upsert**, relations **many-to-one** par lookup
+  (N+1), ops atomiques `increment`/`addToSet`/`pull` (`FieldValue`), truncate par
+  batch (≤ 450).
+- Connexion : `firestore://<projectId>?keyFile=/chemin/sa.json&rest=true` — ou
+  `FIRESTORE_EMULATOR_HOST` pour l'émulateur (aucune clé requise).
+- **Limites NoSQL explicites** (erreur documentée) : `$or` inter-champs,
+  `$regex`/`$exists`, `aggregate()`, `search()` full-text (déléguer à un module
+  storage Elasticsearch/OpenSearch), `beginTx` manuel.
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`@google-cloud/firestore` optionnel).
+
+Validé sur **émulateur Java** (pas de Docker ; `firebase-tools@13` si Java < 21) :
+harnais `test-sgbd` **20/20**, smoke NoSQL **41/41**, modèle du starter **6/6**.
+3 correctifs issus des tests :
+
+- `create()` pose `deletedAt: null` si `softDelete` — Firestore ne matche pas les
+  champs **absents**, donc `where('deletedAt','==',null)` masquait sinon les docs neufs.
+- `deleteMany()` soft-delete : `batch.update()` au lieu de `set()` (qui écrasait le doc).
+- `testConnection()` : collection sonde non réservée (le motif `__…__` est interdit).
+
+Starter dédié : `nextjs-mostajs-orm-firestore-starter`. Test cloud opt-in (clé GCP/ADC).
+
+### Feat — Dialecte DuckDB (14e dialecte · OLAP in-process)
+
+Nouveau dialecte `duckdb` (`AbstractSqlDialect`, SQL ≈ PostgreSQL) — moteur OLAP
+**in-process** (fichier ou `:memory:`). Placeholders `?`, types
+VARCHAR/DOUBLE/BOOLEAN/TIMESTAMP/JSON, `ILIKE` insensible à la casse, liste des
+tables via `information_schema` ; `{ changes }` lu via la colonne `Count` des DML.
+Driver `duckdb` (peer optionnel). Validé harnais **20/20**. Ouvre la voie
+navigateur via `duckdb-wasm`.
+
 ## [2.5.4] — 2026-06-06
 
 ### Fix — Anomalie #19 : `deserializeRow` plante sur un schéma sans `relations`
