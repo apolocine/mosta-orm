@@ -2,6 +2,16 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.6.1] — 2026-06-12
+
+### Chore — packaging npm allégé (aucun changement de code)
+
+`README.pdf` (4.9 Mo) était **force-inclus** par npm (règle `README*`), gonflant
+le tarball 2.6.0 à **4.3 Mo**. `.npmignore` exclut désormais `*.pdf`, durcit
+l'exclusion des sources (`*.ts` sauf `*.d.ts`) et ajoute les scripts de test
+locaux + artefacts émulateur Firestore. Tarball **4.3 Mo → ~212 ko** ; seul
+`dist/` (JS compilé + `.d.ts`) est distribué.
+
 ## [2.6.0] — 2026-06-12
 
 ### Feat — Dialecte Firestore (15e dialecte · NoSQL documentaire)
