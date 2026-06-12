@@ -285,7 +285,8 @@ export type DialectType =
   | 'sybase'
   | 'duckdb'
   | 'firestore'
-  | 'firebird';
+  | 'firebird'
+  | 'clickhouse';
 
 /**
  * Schema generation strategy (inspired by hibernate.hbm2ddl.auto)

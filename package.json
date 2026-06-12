@@ -1,7 +1,7 @@
 {
   "name": "@mostajs/orm",
-  "version": "2.7.0",
-  "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 16 databases, zero lock-in, runs in the browser/WebContainer via WASM (SQLite & Postgres)",
+  "version": "2.8.0",
+  "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 17 databases, zero lock-in, runs in the browser/WebContainer via WASM (SQLite & Postgres)",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -91,6 +91,7 @@
     "ts-morph": "^28.0.0"
   },
   "peerDependencies": {
+    "@clickhouse/client": ">=1.0.0",
     "@electric-sql/pglite": ">=0.2.0",
     "@google-cloud/firestore": ">=7.0.0",
     "@google-cloud/spanner": ">=7.0.0",
@@ -109,6 +110,9 @@
     "sql.js": ">=1.8.0"
   },
   "peerDependenciesMeta": {
+    "@clickhouse/client": {
+      "optional": true
+    },
     "sql.js": {
       "optional": true
     },

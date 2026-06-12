@@ -116,6 +116,10 @@ export const DIALECT_CONFIGS = {
         installHint: 'npm install node-firebird',
         label: 'Firebird (OLTP relationnel — serveur / embarqué, FB 3.0+)',
     },
+    clickhouse: {
+        installHint: 'npm install @clickhouse/client',
+        label: 'ClickHouse (OLAP colonnaire — append/analytique, HTTP)',
+    },
 };
 /**
  * Get the list of supported dialect types

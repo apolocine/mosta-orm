@@ -2,6 +2,28 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.8.0] — 2026-06-12
+
+### Feat — Dialecte ClickHouse (17e dialecte · OLAP colonnaire)
+
+Nouveau dialecte `clickhouse` (`AbstractSqlDialect` + quirks) pour **ClickHouse**
+(OLAP MergeTree, interface HTTP). Driver officiel `@clickhouse/client` (peer optionnel).
+**Scope « append/analytique »** — pas de PK/UNIQUE/FK au sens OLTP.
+
+- **CRUD** complet, relations (many-to-one), filtres (`ILIKE`), count, upsert.
+- Connexion : `http://user:password@host:8123/database`.
+- **Quirks gérés** : `CREATE TABLE … ENGINE = MergeTree() ORDER BY id` (generateCreateTable
+  surchargé) ; paramètres **typés** `{pN:Type}` (conversion des `?` positionnels) ; colonnes
+  `Nullable(T)` (sauf id) ; **UPDATE/DELETE → mutations** `ALTER TABLE … UPDATE/DELETE`
+  rendues **synchrones** via `mutations_sync=2` (read-after-write fiable) ; dates au format
+  `YYYY-MM-DD HH:MM:SS` ; pas de `CREATE INDEX`.
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`@clickhouse/client` optionnel).
+
+**Validé LIVE** sur un `clickhouse-server` natif (sans Docker, amia) : harnais `test-sgbd`
+**20/20**. Limites : unicité non garantie ; mutations coûteuses (réserver à l'analytique).
+
 ## [2.7.0] — 2026-06-12
 
 ### Feat — Dialecte Firebird (16e dialecte · OLTP relationnel)
