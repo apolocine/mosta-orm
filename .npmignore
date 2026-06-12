@@ -1,9 +1,23 @@
-# Source TypeScript (dist/ is published)
+# Source code — JAMAIS publié (seul dist/ compilé est distribué)
 src/
 tsconfig.json
+*.ts
+!**/*.d.ts
+
+# Documents binaires lourds — ne pas embarquer (npm force l'inclusion de README*)
+README.pdf
+*.pdf
 
 # Examples (not needed by consumers)
 examples/
+
+# Scripts de test locaux (jamais publiés)
+test-scripts/
+orm-scripts-tests/
+
+# Firestore emulator (artefacts locaux)
+.firestore-emulator/
+firestore-debug.log
 
 # Development files
 *.tgz
