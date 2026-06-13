@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
 [![npm downloads](https://img.shields.io/npm/dm/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
-[![dialects](https://img.shields.io/badge/dialects-19-success.svg)](#databases)
+[![databases](https://img.shields.io/badge/databases-19-success.svg)](#databases)
 [![Types: TypeScript](https://img.shields.io/badge/types-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/@mostajs/orm)](https://bundlephobia.com/package/@mostajs/orm)
 
@@ -28,7 +28,7 @@ cd ~/my-app && ./01-quickstart-sqlite.sh            # runnable in 30 seconds
 
 ## Why @mostajs/orm ?
 
-- 🎯 **One API, 19 dialects.** Switch from PostgreSQL to MongoDB to Firestore to SQLite without rewriting a single repository call.
+- 🎯 **One API, 19 databases** *(21 dialect implementations — `sql.js` & `pglite` are WASM variants of SQLite & PostgreSQL).* Switch from PostgreSQL to MongoDB to Firestore to SQLite without rewriting a single repository call.
 - 🪶 **Zero lock-in.** Native drivers, no proprietary query DSL — your SQL/NoSQL stays portable.
 - 🧬 **Hibernate / JPA semantics.** `@OneToMany`, cascade types, `SAVEPOINT`, schema strategies (`validate`/`update`/`create`/`create-drop`) — concepts battle-tested for 25 years, ported to TypeScript.
 - 🌉 **Drop-in Prisma replacement.** [`@mostajs/orm-bridge`](https://www.npmjs.com/package/@mostajs/orm-bridge) lets you keep your Prisma code while running on any of 19 databases.
@@ -279,6 +279,8 @@ If `@mostajs/orm` saves you days of glue code, please :
 ## Databases
 
 SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · CockroachDB · DB2 · SAP HANA · HSQLDB · Spanner · Sybase · DuckDB · Firestore · Firebird · ClickHouse · Redis · Cassandra
+
+> **19 databases · 21 dialect implementations.** The two extra dialects are **WASM variants** of databases already in the list — `sql.js` (SQLite WASM) and `pglite` (PostgreSQL WASM) — for the browser / WebContainer / edge. They are not separate engines, hence the **19 databases** headline.
 
 - **`duckdb`** — OLAP **in-process** engine (file or `:memory:`), SQL ≈ PostgreSQL. Analytics without a server.
 - **`firestore`** — Google Cloud **Firestore**, NoSQL document store (Mongo-style API). Remote (gRPC/TLS) or local **Java emulator** (no Docker, no key); production via a service-account key. Full-text search delegates to an external search module.
