@@ -1,0 +1,37 @@
+# CI — typecheck + suite de tests in-process (@mostajs/orm).
+# Aucune infrastructure : tout tourne en mémoire (sqlite/sql.js/pglite/duckdb).
+# Author: Dr Hamid MADANI <drmdh@msn.com>
+name: test
+
+on:
+  push:
+    branches: [main, 'feat/**', 'test/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # package-lock.json n'est pas versionné (choix du projet) → npm install (pas npm ci).
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Test (in-process dialects)
+        run: npm test
