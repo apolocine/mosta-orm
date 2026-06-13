@@ -83,6 +83,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -92,16 +95,16 @@
   },
   "peerDependencies": {
     "@clickhouse/client": ">=1.0.0",
-    "cassandra-driver": ">=4.0.0",
-    "ioredis": ">=5.0.0",
     "@electric-sql/pglite": ">=0.2.0",
     "@google-cloud/firestore": ">=7.0.0",
     "@google-cloud/spanner": ">=7.0.0",
     "@mostajs/socle": ">=2.0.0",
     "@sap/hana-client": ">=2.0.0",
     "better-sqlite3": ">=9.0.0",
+    "cassandra-driver": ">=4.0.0",
     "duckdb": ">=1.0.0",
     "ibm_db": ">=3.0.0",
+    "ioredis": ">=5.0.0",
     "mariadb": ">=3.0.0",
     "mongoose": ">=7.0.0",
     "mssql": ">=10.0.0",
@@ -176,7 +179,8 @@
     "mongoose": "^8.0.0",
     "pg": "^8.21.0",
     "sql.js": "^1.14.1",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.8"
   },
   "funding": {
     "type": "github",
