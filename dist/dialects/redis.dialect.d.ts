@@ -1,0 +1,53 @@
+import type { IDialect, DialectType, ConnectionConfig, EntitySchema, FilterQuery as DALFilter, QueryOptions, AggregateStage, TxHandle } from '../core/types.js';
+export declare class RedisDialect implements IDialect {
+    readonly dialectType: DialectType;
+    private config;
+    private db;
+    /** Cache des types de champs par collection (pour traduire les filtres en FT). */
+    private fieldTypes;
+    private prefix;
+    private keyOf;
+    private keyPrefix;
+    private indexOf;
+    private client;
+    private genId;
+    private _seed;
+    private rnd;
+    private withTimestamps;
+    private typesFor;
+    private clauseFor;
+    private buildQuery;
+    /** Exécute FT.SEARCH et renvoie les documents JSON. */
+    private ftSearch;
+    connect(config: ConnectionConfig): Promise<void>;
+    disconnect(): Promise<void>;
+    testConnection(): Promise<boolean>;
+    initSchema(schemas: EntitySchema[]): Promise<void>;
+    private ensureIndex;
+    find<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T[]>;
+    findOne<T>(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<T | null>;
+    findById<T>(schema: EntitySchema, id: string, options?: QueryOptions): Promise<T | null>;
+    create<T>(schema: EntitySchema, data: Record<string, unknown>): Promise<T>;
+    update<T>(schema: EntitySchema, id: string, data: Record<string, unknown>): Promise<T | null>;
+    updateMany(schema: EntitySchema, filter: DALFilter, data: Record<string, unknown>): Promise<number>;
+    delete(schema: EntitySchema, id: string): Promise<boolean>;
+    deleteMany(schema: EntitySchema, filter: DALFilter): Promise<number>;
+    count(schema: EntitySchema, filter: DALFilter, options?: QueryOptions): Promise<number>;
+    distinct(schema: EntitySchema, field: string, filter: DALFilter, options?: QueryOptions): Promise<unknown[]>;
+    aggregate<T>(_schema: EntitySchema, _stages: AggregateStage[], _options?: QueryOptions): Promise<T[]>;
+    private populate;
+    findWithRelations<T>(schema: EntitySchema, filter: DALFilter, relations: string[], options?: QueryOptions): Promise<T[]>;
+    findByIdWithRelations<T>(schema: EntitySchema, id: string, relations: string[], options?: QueryOptions): Promise<T | null>;
+    upsert<T>(schema: EntitySchema, filter: DALFilter, data: Record<string, unknown>): Promise<T>;
+    increment(schema: EntitySchema, id: string, field: string, amount: number): Promise<Record<string, unknown>>;
+    addToSet(schema: EntitySchema, id: string, field: string, value: unknown): Promise<Record<string, unknown> | null>;
+    pull(schema: EntitySchema, id: string, field: string, value: unknown): Promise<Record<string, unknown> | null>;
+    search<T>(schema: EntitySchema, query: string, fields: string[], options?: QueryOptions): Promise<T[]>;
+    $transaction<T>(cb: (tx: IDialect) => Promise<T>): Promise<T>;
+    beginTx(): Promise<TxHandle>;
+    dropTable(tableName: string): Promise<void>;
+    truncateTable(tableName: string): Promise<void>;
+    dropSchema(schemas: EntitySchema[]): Promise<string[]>;
+    truncateAll(schemas: EntitySchema[]): Promise<string[]>;
+}
+export declare function createDialect(): IDialect;

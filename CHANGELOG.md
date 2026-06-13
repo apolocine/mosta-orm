@@ -2,6 +2,130 @@
 
 All notable changes to `@mostajs/orm` will be documented in this file.
 
+## [2.10.1] — 2026-06-13
+
+### Validé — HSQLDB via le pont JDBC (1er dialecte « pont » validé live)
+
+Le dialecte `hsqldb` (déjà livré, sans driver npm) est désormais **validé LIVE 20/20**
+via le **pont JDBC transparent** : un process Java `MostaJdbcBridge` charge `hsqldb*.jar`
+depuis `jar_files/` et parle HTTP à l'ORM (`AbstractSqlDialect` détecte le JAR et route).
+C'est le même chemin qui activera DB2 / SAP HANA / Sybase une fois leur driver JDBC déposé.
+
+- Serveur HSQLDB **local** (aucun Docker) : `org.hsqldb.server.Server`, port 9001, base
+  `mostadev`, user `SA`/sans mot de passe. Script de lancement :
+  `test-scripts/hjar/run-hsqldb-server.sh`.
+- URI ORM : `hsqldb:hsql://localhost:9001/mostadev`.
+
+### Fix — `count()` insensible à la casse de l'alias (HSQLDB/Oracle)
+
+`SELECT COUNT(*) as cnt` : certains moteurs **plient l'alias non-quoté en MAJUSCULES**
+(HSQLDB → `CNT`), et le pont JDBC renvoie la clé brute sans la normaliser comme le font
+les drivers natifs. `count()` lit désormais `cnt` puis `CNT`, et à défaut la première (et
+seule) valeur de la ligne — robuste quel que soit le pliage de casse du backend.
+Non-régression vérifiée 20/20 sur les 14 dialectes SQL déjà validés (locaux + amia).
+
+### Fix — Dialecte SQL Server : connexion par URL + `NVARCHAR(255)`
+
+- `doConnect` parse une URL `mssql://user:pass@host:port/db?encrypt=…` en objet de config
+  (node-mssql exige un objet, pas une chaîne).
+- `string` → `NVARCHAR(255)` (et non `NVARCHAR(MAX)`) : SQL Server interdit un index/contrainte
+  `UNIQUE` sur `NVARCHAR(MAX)`. Validé LIVE 20/20 sur SQL Server 2022 natif (apt, sans Docker).
+
+## [2.10.0] — 2026-06-12
+
+### Feat — Dialecte Cassandra (19e dialecte · wide-column CQL)
+
+Nouveau dialecte `cassandra` (`AbstractSqlDialect` + quirks CQL) pour **Apache Cassandra**
+(NoSQL wide-column distribué). Driver officiel `cassandra-driver` (peer optionnel).
+**Validé LIVE sur amia : harnais `test-sgbd` 20/20.**
+
+- Connexion : `cassandra://host:9042/keyspace[?dc=datacenter1]`.
+- **Quirks CQL gérés** : `CREATE TABLE (… PRIMARY KEY)` sans NOT NULL/UNIQUE/FK/DEFAULT ;
+  `ALLOW FILTERING` ajouté automatiquement aux `SELECT` filtrés sur colonne non-clé ;
+  `LIMIT` sans `OFFSET` ; pas d'`ORDER BY` arbitraire ; `INSERT` = upsert natif ;
+  placeholders `?` (prepared) ; introspection `system_schema.tables/columns` ; types
+  `text/double/boolean/timestamp` ; `Long` → number à la lecture ; **`WHERE 1=1` retiré**
+  (tautologie SQL des filtres vides, refusée par CQL).
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`cassandra-driver` optionnel).
+
+**Validé LIVE** sur un nœud `cassandra` 4.1 natif (sans Docker, amia) : harnais `test-sgbd`
+**20/20**. NB infra : Cassandra 4.1 exige **Java 11** (option JVM CMS retirée en Java 14+ →
+ne démarre pas sous Java 17).
+
+## [2.9.0] — 2026-06-12
+
+### Feat — Dialecte Redis (18e dialecte · NoSQL documentaire, Redis Stack)
+
+Nouveau dialecte `redis` (`IDialect` dédié, façon Mongo) sur **Redis Stack**. Driver
+`ioredis` (peer optionnel). **Pas un simple cache KV** : stockage documentaire JSON +
+recherche serveur.
+
+- Stockage **RedisJSON** : `JSON.SET/GET`, `JSON.NUMINCRBY` (increment atomique).
+- Requêtes **RediSearch** : un index `FT.CREATE` par entité à l'`initSchema` ; `FT.SEARCH`
+  avec **traduction des filtres** `@mostajs` (`$eq/$ne/$gt/$gte/$lt/$lte/$in/$nin/$regex`)
+  → TAG / NUMERIC / TEXT ; `SORTBY`/`LIMIT` ; count via `LIMIT 0 0` ; soft-delete via champ
+  indexé `_deleted`. Échappement des valeurs TAG (UUID).
+- **CRUD** complet, relations many-to-one par lookup (`JSON.GET`), upsert, `addToSet`/`pull`.
+- Connexion : `redis://host:6379`.
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`ioredis` optionnel).
+
+**Validé LIVE** sur un `redis-stack-server` natif (modules `search` + `ReJSON`, sans
+Docker, amia) : harnais `test-sgbd` **20/20**. Périmètre : full-text via RediSearch ;
+agrégation lourde déléguée (`FT.AGGREGATE`). Positionnement (cf. étude croisée interne) :
+couche données opérationnelle temps-réel qui alimente les couches analytiques/décisionnelles.
+
+## [2.8.0] — 2026-06-12
+
+### Feat — Dialecte ClickHouse (17e dialecte · OLAP colonnaire)
+
+Nouveau dialecte `clickhouse` (`AbstractSqlDialect` + quirks) pour **ClickHouse**
+(OLAP MergeTree, interface HTTP). Driver officiel `@clickhouse/client` (peer optionnel).
+**Scope « append/analytique »** — pas de PK/UNIQUE/FK au sens OLTP.
+
+- **CRUD** complet, relations (many-to-one), filtres (`ILIKE`), count, upsert.
+- Connexion : `http://user:password@host:8123/database`.
+- **Quirks gérés** : `CREATE TABLE … ENGINE = MergeTree() ORDER BY id` (generateCreateTable
+  surchargé) ; paramètres **typés** `{pN:Type}` (conversion des `?` positionnels) ; colonnes
+  `Nullable(T)` (sauf id) ; **UPDATE/DELETE → mutations** `ALTER TABLE … UPDATE/DELETE`
+  rendues **synchrones** via `mutations_sync=2` (read-after-write fiable) ; dates au format
+  `YYYY-MM-DD HH:MM:SS` ; pas de `CREATE INDEX`.
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`@clickhouse/client` optionnel).
+
+**Validé LIVE** sur un `clickhouse-server` natif (sans Docker, amia) : harnais `test-sgbd`
+**20/20**. Limites : unicité non garantie ; mutations coûteuses (réserver à l'analytique).
+
+## [2.7.0] — 2026-06-12
+
+### Feat — Dialecte Firebird (16e dialecte · OLTP relationnel)
+
+Nouveau dialecte `firebird` (`AbstractSqlDialect` + quirks) pour **Firebird 3.0+**
+(lignée InterBase). Driver pur-JS `node-firebird` (peer optionnel). Connexion serveur
+ou via tunnel ; id UUID pré-généré (pas de generators).
+
+- **CRUD** complet, relations (many-to-one), filtres, count, upsert.
+- Connexion : `firebird://user:password@host:port/chemin.fdb[?role=&plugin=&wireCrypt=&create=true]`.
+- **Quirks gérés** : pagination `ROWS m TO n` (pas de LIMIT/OFFSET) ; `boolean → SMALLINT`
+  0/1 (node-firebird binde les booléens en `'1'`/`'0'` → BOOLEAN natif lève `-303`) ;
+  `text/json/array → VARCHAR(4000)` (node-firebird **hange** à la lecture des BLOB sur
+  wire chiffré) ; `DROP TABLE` multi-passes (ni `IF EXISTS` ni `CASCADE`) ; introspection
+  `RDB$RELATIONS`/`RDB$RELATION_FIELDS` ; auth `Srp` + `wireCrypt` forcés (négociation auto
+  du driver plante) ; insensible-casse via `UPPER(col) LIKE UPPER(?)`.
+
+Câblage : `DialectType`, `DIALECT_LOADERS`, `DIALECT_CONFIGS`, `peerDependencies`
+(`node-firebird` optionnel).
+
+**Validé LIVE** sur un serveur `firebird3.0-server` natif (sans Docker, amia) :
+harnais `test-sgbd` **20/20**. Limites connues : contenu texte/JSON ≤ 4000 car. ;
+compteur d'affected-rows approximatif (`updateMany`/`deleteMany`) — non exposé par le driver.
+
+Rapport de validation HTML : générateur réutilisable `test-scripts/sgbd-html-report.mjs`.
+
 ## [2.6.1] — 2026-06-12
 
 ### Chore — packaging npm allégé (aucun changement de code)

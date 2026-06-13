@@ -1,7 +1,7 @@
 {
   "name": "@mostajs/orm",
-  "version": "2.6.1",
-  "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 13 databases, zero lock-in, runs in the browser/WebContainer via WASM (SQLite & Postgres)",
+  "version": "2.10.1",
+  "description": "Hibernate-inspired multi-dialect ORM for Node.js/TypeScript — One API, 19 databases, zero lock-in, runs in the browser/WebContainer via WASM (SQLite & Postgres)",
   "author": "Dr Hamid MADANI <drmdh@msn.com>",
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -83,6 +83,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -91,23 +94,36 @@
     "ts-morph": "^28.0.0"
   },
   "peerDependencies": {
+    "@clickhouse/client": ">=1.0.0",
     "@electric-sql/pglite": ">=0.2.0",
     "@google-cloud/firestore": ">=7.0.0",
     "@google-cloud/spanner": ">=7.0.0",
     "@mostajs/socle": ">=2.0.0",
     "@sap/hana-client": ">=2.0.0",
     "better-sqlite3": ">=9.0.0",
+    "cassandra-driver": ">=4.0.0",
     "duckdb": ">=1.0.0",
     "ibm_db": ">=3.0.0",
+    "ioredis": ">=5.0.0",
     "mariadb": ">=3.0.0",
     "mongoose": ">=7.0.0",
     "mssql": ">=10.0.0",
     "mysql2": ">=3.0.0",
+    "node-firebird": ">=1.1.0",
     "oracledb": ">=6.0.0",
     "pg": ">=8.0.0",
     "sql.js": ">=1.8.0"
   },
   "peerDependenciesMeta": {
+    "@clickhouse/client": {
+      "optional": true
+    },
+    "cassandra-driver": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
     "sql.js": {
       "optional": true
     },
@@ -124,6 +140,9 @@
       "optional": true
     },
     "@google-cloud/firestore": {
+      "optional": true
+    },
+    "node-firebird": {
       "optional": true
     },
     "pg": {
@@ -160,7 +179,8 @@
     "mongoose": "^8.0.0",
     "pg": "^8.21.0",
     "sql.js": "^1.14.1",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.8"
   },
   "funding": {
     "type": "github",

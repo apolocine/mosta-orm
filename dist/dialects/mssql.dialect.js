@@ -7,7 +7,9 @@ import { AbstractSqlDialect } from './abstract-sql.dialect.js';
 // Type Mapping — DAL FieldType → SQL Server column type
 // ============================================================
 const MSSQL_TYPE_MAP = {
-    string: 'NVARCHAR(MAX)',
+    // string borné (NVARCHAR(255)) et NON MAX : SQL Server interdit un index/contrainte
+    // UNIQUE sur une colonne NVARCHAR(MAX) (cf. champs unique `name`/`slug`).
+    string: 'NVARCHAR(255)',
     text: 'NVARCHAR(MAX)',
     number: 'FLOAT',
     boolean: 'BIT',
@@ -99,14 +101,33 @@ export class MSSQLDialect extends AbstractSqlDialect {
     }
     // --- Connection ---
     async doConnect(config) {
+        let mssql;
         try {
-            const mssql = await import(/* webpackIgnore: true */ 'mssql');
-            const connect = mssql.default?.connect || mssql.connect;
-            this.pool = await connect(config.uri);
+            mssql = await import(/* webpackIgnore: true */ 'mssql');
         }
         catch (e) {
             throw new Error(`SQL Server driver not found. Install it: npm install mssql\n` +
                 `Original error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        const connect = (mssql.default?.connect || mssql.connect);
+        // node-mssql attend un OBJET de config. Une URL `mssql://user:pass@host:port/db?opts`
+        // est parsée ici ; toute autre forme (chaîne ADO `Server=...`) est passée telle quelle.
+        if (/^mssql:\/\//i.test(config.uri)) {
+            const u = new URL(config.uri.replace(/^mssql:\/\//i, 'http://'));
+            this.pool = await connect({
+                server: u.hostname || 'localhost',
+                port: u.port ? Number(u.port) : 1433,
+                user: decodeURIComponent(u.username),
+                password: decodeURIComponent(u.password),
+                database: u.pathname.replace(/^\//, ''),
+                options: {
+                    encrypt: u.searchParams.get('encrypt') !== 'false',
+                    trustServerCertificate: u.searchParams.get('trustServerCertificate') === 'true',
+                },
+            });
+        }
+        else {
+            this.pool = await connect(config.uri);
         }
     }
     async doDisconnect() {

@@ -1,15 +1,15 @@
 # @mostajs/orm — fiche LLM
-> ORM multi-dialecte inspiré d'Hibernate — une seule API, 15 bases de données, zéro lock-in.
+> ORM multi-dialecte inspiré d'Hibernate — une seule API, 19 bases de données, zéro lock-in.
 
-- Version: 2.6.1 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
-- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 + #17 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers : **dialecte WASM `sqljs` (SQLite, 2.4.0)** + **dialecte WASM `pglite` (PostgreSQL, idb:// persistance navigateur, 2.5.0)** — bootent navigateur/WebContainer/edge sans binaire natif ; **fix #17 : `index.fields` en tableau produisait une colonne `"0"` (silent SQLite, crash Postgres/PGlite) → normalisé (2.5.0)** ; **dialecte `duckdb` (OLAP in-process, SQL ≈ Postgres, 2.6.0)** + **dialecte `firestore` (NoSQL documentaire managé, émulateur Java ou clé GCP, façon Mongo, 2.6.0)**
+- Version: 2.10.0 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm · Statut audit: complet (dist/) · Anomalies #1-#14 + #16 + #17 corrigées (cf. docs/ANOMALIES-LOT3-2026-05-25.md) — derniers : **dialecte WASM `sqljs` (SQLite, 2.4.0)** + **dialecte WASM `pglite` (PostgreSQL, idb:// persistance navigateur, 2.5.0)** — bootent navigateur/WebContainer/edge sans binaire natif ; **fix #17 : `index.fields` en tableau produisait une colonne `"0"` (silent SQLite, crash Postgres/PGlite) → normalisé (2.5.0)** ; **dialecte `duckdb` (OLAP in-process, SQL ≈ Postgres, 2.6.0)** + **dialecte `firestore` (NoSQL documentaire managé, émulateur Java ou clé GCP, façon Mongo, 2.6.0)** ; **dialecte `firebird` (OLTP relationnel FB 3.0+, validé live, 2.7.0)**  ; **dialecte `clickhouse` (OLAP colonnaire MergeTree, append/analytique, validé live, 2.8.0)**  ; **dialecte `redis` (NoSQL doc Redis Stack : RedisJSON + RediSearch, validé live, 2.9.0)**
 
 ## RÔLE
 Couche d'accès aux données unifiée pour Node.js/TypeScript. Le développeur décrit
 ses entités sous forme d'objets `EntitySchema` (fields, relations, indexes) et obtient
 une API CRUD/query identique quel que soit le SGBD cible : MongoDB, SQLite, PostgreSQL,
 MySQL, MariaDB, Oracle, MSSQL, CockroachDB, DB2, SAP HANA, HSQLDB, Spanner, Sybase,
-DuckDB (OLAP in-process) et Firestore (NoSQL documentaire, façon Mongo).
+DuckDB (OLAP in-process), Firestore (NoSQL documentaire, façon Mongo), Firebird (OLTP), ClickHouse (OLAP), Redis (NoSQL doc, RedisJSON+RediSearch) et Cassandra (wide-column CQL, validé live).
 Deux dialectes WASM (zéro binaire natif) bootent dans le navigateur, les WebContainers
 (StackBlitz / Bolt.new) et l'edge — même API/SQL que leur moteur respectif :
 `sqljs` (SQLite WASM, via sql.js) et `pglite` (PostgreSQL WASM, via @electric-sql/pglite ;
@@ -23,7 +23,7 @@ ConnectionConfig = persistence.xml). C'est le module fondation de l'écosystème
 npm i @mostajs/orm
 (driver natif requis selon dialecte : better-sqlite3, pg, mysql2, mariadb, oracledb,
 mssql, ibm_db, @sap/hana-client, @google-cloud/spanner, @google-cloud/firestore, duckdb,
-mongoose — peer/optional deps)
+node-firebird, @clickhouse/client, ioredis, cassandra-driver, mongoose — peer/optional deps)
 Pour le navigateur / WebContainer / edge (WASM pur, aucun binaire natif — à utiliser dans
 Bolt.new / StackBlitz / Cloudflare Workers où better-sqlite3/pg ne chargent pas) :
 - SQLite : `npm i sql.js` + `{ dialect: 'sqljs', uri: ':memory:' }` ; persistance fichier

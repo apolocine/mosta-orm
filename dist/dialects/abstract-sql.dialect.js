@@ -1699,7 +1699,14 @@ export class AbstractSqlDialect {
         const sql = `SELECT COUNT(*) as cnt FROM ${table} WHERE ${where.sql}`;
         this.log('COUNT', schema.collection, { sql, params: where.params });
         const rows = await this.executeQuery(sql, where.params);
-        return rows.length > 0 ? Number(rows[0].cnt) : 0;
+        if (rows.length === 0)
+            return 0;
+        // Certains backends plient la casse de l'alias non-quoté (HSQLDB/Oracle → CNT)
+        // ou le renvoient via le pont JDBC sans normalisation. La requête ne sélectionne
+        // qu'UNE colonne : on lit cnt/CNT puis, à défaut, la première (et seule) valeur.
+        const row = rows[0];
+        const raw = row.cnt ?? row.CNT ?? Object.values(row)[0];
+        return Number(raw);
     }
     async distinct(schema, field, filter, options) {
         this.resetParams();

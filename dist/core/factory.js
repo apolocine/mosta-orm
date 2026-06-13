@@ -40,6 +40,10 @@ const DIALECT_LOADERS = {
     sybase: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/sybase.dialect.js'),
     duckdb: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/duckdb.dialect.js'),
     firestore: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/firestore.dialect.js'),
+    firebird: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/firebird.dialect.js'),
+    clickhouse: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/clickhouse.dialect.js'),
+    redis: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/redis.dialect.js'),
+    cassandra: () => import(/* webpackIgnore: true */ /* @vite-ignore */ '../dialects/cassandra.dialect.js'),
 };
 /**
  * Dynamically load a dialect adapter module.

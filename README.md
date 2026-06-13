@@ -1,15 +1,15 @@
 # @mostajs/orm
 
-> **Plug & Play ORM to Drive 15 Databases at Once**
+> **Plug & Play ORM to Drive 19 Databases at Once**
 
 [![npm version](https://img.shields.io/npm/v/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
 [![npm downloads](https://img.shields.io/npm/dm/@mostajs/orm.svg)](https://www.npmjs.com/package/@mostajs/orm)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
-[![dialects](https://img.shields.io/badge/dialects-15-success.svg)](#databases)
+[![dialects](https://img.shields.io/badge/dialects-19-success.svg)](#databases)
 [![Types: TypeScript](https://img.shields.io/badge/types-TypeScript-blue.svg)](https://www.typescriptlang.org/)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/@mostajs/orm)](https://bundlephobia.com/package/@mostajs/orm)
 
-Hibernate-inspired multi-dialect ORM for Node.js & TypeScript — **one API, 15 databases, zero lock-in, bundler-friendly**.
+Hibernate-inspired multi-dialect ORM for Node.js & TypeScript — **one API, 19 databases, zero lock-in, bundler-friendly**.
 
 📦 **npm** · https://www.npmjs.com/package/@mostajs/orm
 🐙 **GitHub** · https://github.com/apolocine/mosta-orm
@@ -28,10 +28,10 @@ cd ~/my-app && ./01-quickstart-sqlite.sh            # runnable in 30 seconds
 
 ## Why @mostajs/orm ?
 
-- 🎯 **One API, 15 dialects.** Switch from PostgreSQL to MongoDB to Firestore to SQLite without rewriting a single repository call.
+- 🎯 **One API, 19 dialects.** Switch from PostgreSQL to MongoDB to Firestore to SQLite without rewriting a single repository call.
 - 🪶 **Zero lock-in.** Native drivers, no proprietary query DSL — your SQL/NoSQL stays portable.
 - 🧬 **Hibernate / JPA semantics.** `@OneToMany`, cascade types, `SAVEPOINT`, schema strategies (`validate`/`update`/`create`/`create-drop`) — concepts battle-tested for 25 years, ported to TypeScript.
-- 🌉 **Drop-in Prisma replacement.** [`@mostajs/orm-bridge`](https://www.npmjs.com/package/@mostajs/orm-bridge) lets you keep your Prisma code while running on any of 15 databases.
+- 🌉 **Drop-in Prisma replacement.** [`@mostajs/orm-bridge`](https://www.npmjs.com/package/@mostajs/orm-bridge) lets you keep your Prisma code while running on any of 19 databases.
 - 🔁 **Cross-dialect replication built-in.** [`@mostajs/replicator`](https://www.npmjs.com/package/@mostajs/replicator) — CDC + master/slave + failover across SQL ↔ MongoDB.
 - 🧪 **Bundler-friendly.** Tree-shakable ESM, no `eval`, works with esbuild / Vite / Next.js / Bun out of the box.
 - 🏷️ **Multi-app DB cohabitation** *(v2.3.0+)*. `DB_TABLE_PREFIX` à la Hibernate `physical_naming_strategy` — let two apps share one Oracle/MSSQL/HANA DB user without colliding on `users`/`roles`/`permissions`.
@@ -118,8 +118,8 @@ Working from an **AI dev tool** (Cursor, Cline, Claude…)? Generate schemas, li
 
 | | @mostajs/orm | Prisma | Drizzle | TypeORM |
 |---|:---:|:---:|:---:|:---:|
-| SQL dialects | **10** *(PG, MySQL, MariaDB, SQLite, MSSQL, Oracle, DB2, HANA, Cockroach, DuckDB…)* | 5 | 5 | 8 |
-| NoSQL dialects | **MongoDB + Firestore native** | ❌ | ❌ | ❌ |
+| SQL dialects | **12** *(PG, MySQL, MariaDB, SQLite, MSSQL, Oracle, DB2, HANA, Cockroach, DuckDB, Firebird, ClickHouse…)* | 5 | 5 | 8 |
+| NoSQL dialects | **MongoDB + Firestore + Redis native** | ❌ | ❌ | ❌ |
 | Same API across SQL & NoSQL | ✅ | ❌ | ❌ | ❌ |
 | Browser / WebContainer / edge | ✅ *(WASM `sqljs` — zero native binary)* | ⚠️ *(Accelerate, paid)* | ⚠️ *(driver)* | ❌ |
 | Cross-dialect replication | ✅ *(via [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator))* | ❌ | ❌ | ❌ |
@@ -278,10 +278,82 @@ If `@mostajs/orm` saves you days of glue code, please :
 
 ## Databases
 
-SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · CockroachDB · DB2 · SAP HANA · HSQLDB · Spanner · Sybase · DuckDB · Firestore
+SQLite · PostgreSQL · MySQL · MariaDB · MongoDB · Oracle · SQL Server · CockroachDB · DB2 · SAP HANA · HSQLDB · Spanner · Sybase · DuckDB · Firestore · Firebird · ClickHouse · Redis · Cassandra
 
 - **`duckdb`** — OLAP **in-process** engine (file or `:memory:`), SQL ≈ PostgreSQL. Analytics without a server.
 - **`firestore`** — Google Cloud **Firestore**, NoSQL document store (Mongo-style API). Remote (gRPC/TLS) or local **Java emulator** (no Docker, no key); production via a service-account key. Full-text search delegates to an external search module.
+- **`firebird`** — **Firebird 3.0+** OLTP relational engine (InterBase lineage). Pure-JS `node-firebird` driver; `ROWS` pagination, UUID ids. Validated live against a native server.
+- **`clickhouse`** — **ClickHouse** OLAP columnar engine (MergeTree, HTTP). Official `@clickhouse/client` driver. **Append/analytical scope**: `UPDATE`/`DELETE` are mutations (made synchronous), no PK/UNIQUE/FK. Validated live against a native server.
+- **`redis`** — **Redis Stack** as a real-time document store (`ioredis`). Not a plain key-value cache here: entities are stored as native JSON with **RedisJSON** (`JSON.SET/GET`, atomic `JSON.NUMINCRBY`) and queried **server-side** with **RediSearch** (`FT.CREATE` per entity, `FT.SEARCH` translating `@mostajs` filters to TAG/NUMERIC/TEXT — O(log n), no key scan). Same `@mostajs/orm` API as MongoDB/Firestore.
+- **`cassandra`** — Apache **Cassandra** wide-column engine (CQL). Official `cassandra-driver`. Query-first: `PRIMARY KEY` lookups, `ALLOW FILTERING` for non-key filters, native upsert, no JOIN/UNIQUE/FK. Validated live against a native node (Cassandra 4.1 needs Java 11).
+
+> **Why Redis here?** Beyond MongoDB/Firestore, the `redis` dialect positions Redis as the **low-latency operational data layer** of the stack — live documents, sessions, queues, search and (via RedisTimeSeries) time-series — the substrate that **feeds the analytical / decision layers** of the ecosystem (e.g. operations-research workloads: assignment, queueing, forecasting). It stores, indexes and serves; it does not compute optima. Heavy aggregation stays delegated (`FT.AGGREGATE` / analytics module).
+
+### Live validation
+
+Every newly added dialect is validated end-to-end against a **real native engine** (no Docker)
+with the shared `test-sgbd` harness. The same **20 checks** run on each dialect, across 8 phases.
+Detail of the **20/20** run on **HSQLDB** (HyperSQL 2.7, via the JDBC bridge) — each check `1/1 ✅`:
+
+| # | Phase | Test | HSQLDB |
+|:--:|---|---|:--:|
+| 1 | Connexion | `getDialect()` — connexion + singleton | 1/1 ✅ |
+| 2 | Schéma | `BaseRepository(Category)` — schéma créé | 1/1 ✅ |
+| 3 | Schéma | `BaseRepository(Product)` — schéma créé | 1/1 ✅ |
+| 4 | Schéma | `BaseRepository(Order)` — schéma créé | 1/1 ✅ |
+| 5 | Create | Category — create ×2 | 1/1 ✅ |
+| 6 | Create | Product — create ×3 avec relation `category` | 1/1 ✅ |
+| 7 | Create | Order — create ×2 avec relation `product` | 1/1 ✅ |
+| 8 | Read | `findById()` | 1/1 ✅ |
+| 9 | Read | `findOne({ slug })` | 1/1 ✅ |
+| 10 | Read | `findAll()` | 1/1 ✅ |
+| 11 | Read | `count()` | 1/1 ✅ |
+| 12 | Read | `findAll({ status })` — filtré | 1/1 ✅ |
+| 13 | Update | `update()` — modifier prix/stock/statut | 1/1 ✅ |
+| 14 | Update | `upsert()` — créer si inexistant puis MAJ | 1/1 ✅ |
+| 15 | Delete | `delete()` — supprimer un product | 1/1 ✅ |
+| 16 | Avancé | create en masse (10 products) | 1/1 ✅ |
+| 17 | Avancé | `findAll` filtré + `count` cohérent | 1/1 ✅ |
+| 18 | Avancé | update en boucle + vérification | 1/1 ✅ |
+| 19 | Avancé | Order avec relation product valide | 1/1 ✅ |
+| 20 | Nettoyage | suppression de toutes les données de test | 1/1 ✅ |
+| | | **Total** | **20/20 ✅** |
+
+**17 dialects validated 20/20** against real engines (native servers on a Linux box, or local):
+
+| Dialect | Engine | Result |
+|---|---|:---:|
+| **PostgreSQL** | `postgresql` (native) | **20/20** ✅ |
+| **SQL Server** | `mssql-server` 2022 (native apt, no Docker) | **20/20** ✅ |
+| **MySQL** | `mysqld` (native) | **20/20** ✅ |
+| **MariaDB** | `mysqld` (native) | **20/20** ✅ |
+| **Oracle XE** | `oracle-xe-21c` (native) | **20/20** ✅ |
+| **CockroachDB** | `cockroachdb` (native) | **20/20** ✅ |
+| **MongoDB** | `mongod` (native) | **20/20** ✅ |
+| **Firebird** | `firebird3.0-server` (native) | **20/20** ✅ |
+| **ClickHouse** | `clickhouse-server` (native) | **20/20** ✅ |
+| **Redis** | `redis-stack-server` (RedisJSON+RediSearch) | **20/20** ✅ |
+| **Cassandra** | `cassandra` 4.1 (CQL, native) | **20/20** ✅ |
+| **Firestore** | Java emulator | **20/20** + **41/41** ✅ |
+| **HSQLDB** | HyperSQL 2.7 (Java, JDBC bridge) | **20/20** ✅ |
+| **DuckDB** | in-process | **20/20** ✅ |
+| **SQLite** | `better-sqlite3` | **20/20** ✅ |
+| **sqljs** | SQLite WASM (`sql.js`) | **20/20** ✅ |
+| **pglite** | PostgreSQL WASM (`@electric-sql/pglite`) | **20/20** ✅ |
+
+> **HSQLDB** runs through the transparent JDBC bridge (a Java `MostaJdbcBridge` process that
+> loads `hsqldb*.jar` from `jar_files/` and speaks HTTP to the ORM) — same path that powers
+> DB2 / SAP HANA / Sybase once their JDBC drivers are dropped in.
+>
+> **Pending** (code shipped, live validation requires extra infra): DB2 · SAP HANA · Sybase
+> (JDBC bridge — driver JAR needed), Spanner (16 GB RAM emulator).
+
+> Engine-specific quirks surfaced & fixed during live validation — Firebird: `boolean→SMALLINT`,
+> `text/json→VARCHAR` (driver BLOB read hangs), Srp+wireCrypt auth; ClickHouse: `MergeTree`
+> engine, typed params, `mutations_sync` for synchronous update/delete; Redis: `FT.SEARCH`
+> filter translation, TAG escaping; Cassandra: `ALLOW FILTERING`, `WHERE 1=1` stripping, Java 11.
+> Each run produces an HTML report (`test-scripts/sgbd-html-report.mjs`). Validation is done
+> **one engine at a time** (stop current → start target) to fit a memory-constrained host.
 
 **+ WASM runtimes** — two zero-binary dialects run in WebAssembly, so the same ORM **boots in the browser / Bolt.new / Cloudflare Workers with no native binary**:
 
@@ -347,7 +419,7 @@ Because the WASM build needs **no native binary and no server**, the same typed 
 ```bash
 npm install @mostajs/orm
 # + the driver for your dialect :
-npm install better-sqlite3      # or: pg, mysql2, mongoose, oracledb, mssql, ibm_db, mariadb, @sap/hana-client, @google-cloud/spanner, duckdb
+npm install better-sqlite3      # or: pg, mysql2, mongoose, oracledb, mssql, ibm_db, mariadb, @sap/hana-client, @google-cloud/spanner, duckdb, node-firebird, @clickhouse/client, ioredis, cassandra-driver
 npm install @google-cloud/firestore # Firestore — NoSQL document store (dialect: 'firestore'); Java emulator in dev, GCP key in prod
 npm install sql.js              # SQLite in the browser / Bolt.new / Workers — no native binary (dialect: 'sqljs')
 npm install @electric-sql/pglite # PostgreSQL in the browser — idb:// persistence (dialect: 'pglite')
@@ -1063,7 +1135,7 @@ const conn = getNamedConnection('audit')
 
 | Package | Description |
 |---|---|
-| [@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge) | Keep your Prisma code, run it on any of the 15 databases (`createPrismaLikeDb()` is a drop-in replacement for `new PrismaClient()`). |
+| [@mostajs/orm-bridge](https://www.npmjs.com/package/@mostajs/orm-bridge) | Keep your Prisma code, run it on any of the 19 databases (`createPrismaLikeDb()` is a drop-in replacement for `new PrismaClient()`). |
 | [@mostajs/orm-cli](https://www.npmjs.com/package/@mostajs/orm-cli) | `npx @mostajs/orm-cli` — interactive CLI : convert schemas, init databases, scaffold services, replicator + monitor, seeding, bootstrap Prisma migration. |
 | [@mostajs/orm-adapter](https://www.npmjs.com/package/@mostajs/orm-adapter) | Convert Prisma / JSON Schema / OpenAPI / native `.mjs` to `EntitySchema[]` (bidirectional). |
 | [@mostajs/replicator](https://www.npmjs.com/package/@mostajs/replicator) | Cross-dialect replication : CQRS master/slave, CDC rules (snapshot + incremental), wildcard `*`, failover (`promoteToMaster`). As of @mostajs/orm v1.13, Mongo FK columns accept UUID strings coming from SQL dialects (populate falls back to `{ id: uuid }` lookup). |
